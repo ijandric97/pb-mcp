@@ -15,38 +15,57 @@
 #   dist/INSTALL.md
 #   dist/skills/purebasic/        complete skill (SKILL.md + references/)
 #
-# Compiles straight into dist/ (via PBMCP_OUT) so a server running from the
-# repo-root binary does not lock the build target. dist/ is gitignored;
-# regenerate after every release-worthy change.
+# Builds in a sibling staging directory; the previous dist/ stays intact
+# until the new bundle builds, copies, and passes its smoke check.
 # ---------------------------------------------------------------------------
 set -u
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
-fail() { echo "make-dist: assembly FAILED"; exit 1; }
+STAGE=""
+BACKUP=""
+cleanup() {
+  if [ -n "$STAGE" ] && [ -d "$STAGE" ]; then rm -rf -- "$STAGE"; fi
+}
+restore() {
+  if [ -n "$BACKUP" ] && [ -e "$BACKUP" ] && [ ! -e dist ]; then
+    if ! mv -- "$BACKUP" dist; then echo "make-dist: previous dist remains at $BACKUP"; fi
+  fi
+}
+fail() { restore; echo "make-dist: assembly FAILED"; exit 1; }
+trap cleanup EXIT
 
-echo "make-dist: creating dist layout"
-rm -rf dist
-mkdir -p dist/skills/purebasic || fail
+echo "make-dist: creating staged dist layout"
+STAGE=$(mktemp -d "$PWD/.dist-stage.XXXXXX") || fail
+BACKUP="$STAGE.old"
+mkdir -p "$STAGE/skills/purebasic" || fail
 
 echo "make-dist: building pbmcp"
-export PBMCP_OUT="$(pwd)/dist/pbmcp"
+export PBMCP_OUT="$STAGE/pbmcp"
 if ! bash build.sh; then
-  echo "make-dist: build FAILED - if dist/pbmcp is locked, close the MCP client using it and re-run"
-  exit 1
+  echo "make-dist: build FAILED"
+  fail
 fi
 
 echo "make-dist: copying docs + skill"
-cp README.md dist/ || fail
-cp INSTALL.md dist/ || fail
-cp src/pbdocs-index.json dist/index.json || fail
+cp README.md "$STAGE/" || fail
+cp INSTALL.md "$STAGE/" || fail
+cp src/pbdocs-index.json "$STAGE/index.json" || fail
 echo "make-dist: copying complete skill tree (SKILL.md + references/)"
-cp -R skills/purebasic/. dist/skills/purebasic/ || fail
+cp -R skills/purebasic/. "$STAGE/skills/purebasic/" || fail
 
 # smoke: the artifact must launch (also warms it past first-run security
 # scanning - a never-executed fresh binary can fail to start in time under
 # the suite's timing-sensitive tests)
-echo "make-dist: smoke - dist/pbmcp version"
-"$(pwd)/dist/pbmcp" version >/dev/null 2>&1 || fail
+echo "make-dist: smoke - staged pbmcp version"
+"$STAGE/pbmcp" version >/dev/null 2>&1 || fail
+
+# A failed old-bundle rename leaves dist/ untouched; a failed publish restores it.
+if [ -e dist ] || [ -L dist ]; then mv -- dist "$BACKUP" || fail; fi
+if ! mv -- "$STAGE" dist; then fail; fi
+STAGE=""
+if [ -e "$BACKUP" ] || [ -L "$BACKUP" ]; then
+  if ! rm -rf -- "$BACKUP"; then echo "make-dist: previous dist remains at $BACKUP"; fi
+fi
 
 echo "make-dist: OK"
 ls dist dist/skills/purebasic

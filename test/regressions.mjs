@@ -30,6 +30,29 @@ function rpc(binary, messages, overrides = {}, cwd = root) {
 }
 const text = response => response?.result?.content?.[0]?.text || '';
 
+const validEntry = { name: 'Valid', library: 'fixture', syntax: ['Valid()'], parameters: [], os: [], seeAlso: [] };
+const badIndex = join(scratch, 'malformed-index.json');
+for (const entry of [null, 3, [], {}, { name: 42 }, { name: '' },
+  { ...validEntry, library: [] }, { ...validEntry, syntax: [null] }, { ...validEntry, os: [3] },
+  { ...validEntry, seeAlso: [{}] }, { ...validEntry, parameters: {} },
+  { ...validEntry, parameters: [null] }, { ...validEntry, parameters: [{ description: [] }] }]) {
+  writeFileSync(badIndex, JSON.stringify({ commands: [entry], reference: [] }));
+  const responses = rpc(exe, [call(1, 'pb_command', { name: 'Valid' }), { jsonrpc: '2.0', id: 2, method: 'ping' }],
+    { PUREBASIC_MCP_INDEX: badIndex });
+  verify(responses[0].result?.isError === true && text(responses[0]).includes('schema validation'), 'bad command entry accepted');
+  verify(responses[1].id === 2 && !!responses[1].result, 'bad index killed the session');
+}
+for (const entry of [null, 3, [], {}, { title: 42 }, { title: 'Reference', file: [] }]) {
+  writeFileSync(badIndex, JSON.stringify({ commands: [validEntry], reference: [entry] }));
+  const [response] = rpc(exe, [call(1, 'pb_command', { name: 'Reference' })], { PUREBASIC_MCP_INDEX: badIndex });
+  verify(response.result?.isError === true && text(response).includes('schema validation'), 'bad reference entry accepted');
+}
+for (const value of [null, 42, []]) {
+  writeFileSync(badIndex, JSON.stringify(value));
+  const [response] = rpc(exe, [call(1, 'pb_docs_search', { query: 'Valid' })], { PUREBASIC_MCP_INDEX: badIndex });
+  verify(response.result?.isError === true && text(response).includes('schema validation'), 'non-object index root accepted');
+}
+
 // Mix main-thread compiler/config work with preload to reproduce the old race.
 const replay = [
   { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26' } },

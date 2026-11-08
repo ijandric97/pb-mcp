@@ -17,8 +17,9 @@
 //        --pb-version <v> [--source-json '{"kind":"online",...}']
 //        [--manifest <file>] [--pbmcp <exe>]
 // ---------------------------------------------------------------------------
-import { readdirSync, readFileSync, mkdirSync, writeFileSync, mkdtempSync, rmSync, rmdirSync } from 'node:fs';
+import { readdirSync, readFileSync, mkdirSync, writeFileSync, mkdtempSync, rmSync, rmdirSync, renameSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 
@@ -370,6 +371,12 @@ out += '],"referenceText":' + JSON.stringify(referenceTexts) + '}';
 JSON.parse(out);
 
 mkdirSync(dirname(outFile), { recursive: true });
-writeFileSync(outFile, out);
+const staged = join(dirname(resolve(outFile)), `.pbdocs-${randomUUID()}.json`);
+try {
+  writeFileSync(staged, out, { flag: 'wx' });
+  renameSync(staged, outFile);
+} finally {
+  rmSync(staged, { force: true });
+}
 console.log(`wrote ${outFile} (${Math.round(Buffer.byteLength(out) / 1024)} KB)`);
 console.log('Done.');

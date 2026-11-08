@@ -108,4 +108,47 @@ assert.ok(measured.ms < 2000, `large-file check regressed: ${measured.ms}ms`);
 const longLine = join(scratch, 'long-line.pb');
 writeFileSync(longLine, ' '.repeat(200000) + 'EnableExplicit\n');
 assert.ok(!ok(invoke('pb_check', { file: longLine })).includes('Best practices'));
+
+// Inspect the capture before tool formatting applies its smaller response cap.
+const win = process.platform === 'win32';
+const suffix = win ? '.exe' : '';
+const version = spawnSync(exe, ['version'], { env, encoding: 'utf8', timeout: 15000, windowsHide: true });
+assert.equal(version.status, 0, version.stderr);
+const pbHome = process.env.PUREBASIC_HOME || version.stdout.match(/^PureBasic \S+ - ([^\r\n]+)$/m)?.[1];
+const compiler = pbHome ? join(pbHome, win ? 'Compilers' : 'compilers', 'pbcompiler' + suffix) : 'pbcompiler';
+function compile(file, output) {
+  const args = win ? ['/THREAD', '/CONSOLE', file, '/EXE', output] : ['--thread', '--console', file, '--output', output];
+  const result = spawnSync(compiler, args, { env, encoding: 'utf8', timeout: 30000, windowsHide: true });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+}
+const stderrSource = join(scratch, 'oversized-stderr.pb');
+const stderrExe = join(scratch, 'oversized-stderr' + suffix);
+writeFileSync(stderrSource, '\uFEFFEnableExplicit\nIf OpenConsole()\n  ConsoleError(LSet("x", 5 * 1024 * 1024, "x"))\n  CloseConsole()\nEndIf\n');
+compile(stderrSource, stderrExe);
+const captureSource = join(scratch, 'capture-probe.pb');
+const captureExe = join(scratch, 'capture-probe' + suffix);
+const includes = ['console', 'jsonrpc', 'config', 'metrics', 'docs_index', 'tool_check', 'tool_run', 'tools'];
+writeFileSync(captureSource, '\uFEFFEnableExplicit\n' + includes.map(name =>
+  `XIncludeFile "${join(root, 'src', name + '.pb')}"`).join('\n') + `
+If OpenConsole() = 0 : End 1 : EndIf
+Define captured.RunResT
+RunProcessCapture("${stderrExe}", "", "${scratch}", 10000, @captured)
+Define marker$ = Chr(10) + "…[stderr truncated at 4 MB]"
+If captured\\spawnFailed Or captured\\timedOut Or captured\\exitCode <> 0 : End 2 : EndIf
+If Len(captured\\stderr) <> #MAX_CAPTURE_CHARS + Len(marker$) : End 3 : EndIf
+If Right(captured\\stderr, Len(marker$)) <> marker$ : End 4 : EndIf
+If Left(captured\\stderr, 16) <> LSet("x", 16, "x") : End 5 : EndIf
+NewList lines$()
+Define count.i = #MAX_CAPTURE_CHARS - 1, truncated.i
+CaptureErrorLine("last", lines$(), @count, @truncated)
+If count <> #MAX_CAPTURE_CHARS Or truncated = 0 : End 6 : EndIf
+CaptureErrorLine("discarded", lines$(), @count, @truncated)
+If count <> #MAX_CAPTURE_CHARS Or ListSize(lines$()) <> 1 : End 7 : EndIf
+PrintN("stderr capture bounded")
+CloseConsole()
+`);
+compile(captureSource, captureExe);
+const captured = spawnSync(captureExe, [], { env, encoding: 'utf8', timeout: 15000, windowsHide: true });
+assert.equal(captured.status, 0, `capture probe exit ${captured.status}: ${captured.stdout}${captured.stderr}`);
+assert.match(captured.stdout, /stderr capture bounded/);
 console.log(`compiler tests passed (includes/resources, original paths, args, lint); 50,000 lines: ${Math.round(measured.ms)}ms wall, ${reported}ms reported`);

@@ -167,9 +167,10 @@ interpretation; the root only selects what gets staged:
 
     make-dist.cmd    (Windows)  /  make-dist.sh    (Linux)
 
-Builds the binary and matching installed-help index into `dist/` (via the
-`PBMCP_OUT` override), smoke-tests that the artifact
-launches, and assembles the self-contained bundle:
+Builds the binary and matching installed-help index in a sibling staging
+directory (via the `PBMCP_OUT` override), assembles the bundle, and smoke-tests
+that the artifact launches before replacing `dist/`. Failed builds preserve
+the previous distribution:
 
     dist/pbmcp[.exe]                  native server binary
     dist/index-*.json                 newest repo-root docs index (working drop-in;
@@ -249,6 +250,10 @@ shape under `"mcpServers"`. On Linux the command is e.g.
 Protocol: MCP over stdio — JSON-RPC 2.0, newline-framed UTF-8,
 `2025-03-26`; the optional HTTP mode speaks stateless Streamable HTTP with
 `2025-11-25`.
+Requests may be sent individually or in a batch array. A batch produces one
+response array; notifications receive no response. Invalid request envelopes
+and unknown tools return JSON-RPC errors. Tool execution failures use
+`result.isError`.
 
 The batch scanner takes a UTF-8 JSON array of objects with non-empty `path`,
 `library`, and `file` strings. It emits one command JSON line per entry, in input
@@ -303,8 +308,11 @@ reference. It is not used by the automatic source build:
 - Command entries are parsed by the shipped binary itself in one `scan-batch`
   process per index build. Command records and ranking stay compatible with
   single-page scanning.
-- The optional online mirror finds reference pages by a fixpoint crawl; the
-  installed help is indexed directly without downloading pages.
+- The optional online mirror finds reference pages by a fixpoint crawl and
+  replaces the previous mirror only after a successful refresh. Removed pages
+  disappear from the refreshed mirror. The installed help is indexed directly
+  without downloading pages. Index output is replaced only after a complete
+  file has been written.
 - An optional `referenceText` map stores cleaned reference bodies once per file;
   keyword and constant aliases share those bodies. HTML decoration is removed,
   code examples retain line breaks/indentation, and `pb_command` caps the answer

@@ -245,6 +245,59 @@ Procedure.s DocsFindNewestIndex(Dir$)
   ProcedureReturn best$
 EndProcedure
 
+Procedure.i DocsStringArrayValid(Value.i)
+  If Value = 0 : ProcedureReturn #True : EndIf
+  If JSONType(Value) <> #PB_JSON_Array : ProcedureReturn #False : EndIf
+  Protected i.i
+  For i = 0 To JSONArraySize(Value) - 1
+    If JSONType(GetJSONElement(Value, i)) <> #PB_JSON_String : ProcedureReturn #False : EndIf
+  Next
+  ProcedureReturn #True
+EndProcedure
+
+Procedure.i DocsEntryValid(Entry.i, Reference.i)
+  If JSONType(Entry) <> #PB_JSON_Object : ProcedureReturn #False : EndIf
+  Protected fields$ = "name|library|file|description|returnValue|remarks|example"
+  Protected required$ = "name"
+  If Reference
+    fields$ = "title|id|file|summary"
+    required$ = "title"
+  EndIf
+  If Trim(MemberStr(Entry, required$, "")) = "" : ProcedureReturn #False : EndIf
+  Protected i.i, value.i, k.i, param.i, field$
+  For i = 1 To CountString(fields$, "|") + 1
+    value = GetJSONMember(Entry, StringField(fields$, i, "|"))
+    If value And JSONType(value) <> #PB_JSON_String : ProcedureReturn #False : EndIf
+  Next
+  If Not Reference
+    If Not DocsStringArrayValid(GetJSONMember(Entry, "syntax")) Or Not DocsStringArrayValid(GetJSONMember(Entry, "os")) Or Not DocsStringArrayValid(GetJSONMember(Entry, "seeAlso"))
+      ProcedureReturn #False
+    EndIf
+    value = GetJSONMember(Entry, "parameters")
+    If value
+      If JSONType(value) <> #PB_JSON_Array : ProcedureReturn #False : EndIf
+      For i = 0 To JSONArraySize(value) - 1
+        param = GetJSONElement(value, i)
+        If JSONType(param) <> #PB_JSON_Object : ProcedureReturn #False : EndIf
+        For k = 1 To 2
+          field$ = StringField("name|description", k, "|")
+          param = GetJSONMember(GetJSONElement(value, i), field$)
+          If param And JSONType(param) <> #PB_JSON_String : ProcedureReturn #False : EndIf
+        Next
+      Next
+    EndIf
+  EndIf
+  ProcedureReturn #True
+EndProcedure
+
+Procedure.i DocsEntriesValid(Entries.i, Reference.i)
+  Protected i.i
+  For i = 0 To JSONArraySize(Entries) - 1
+    If Not DocsEntryValid(GetJSONElement(Entries, i), Reference) : ProcedureReturn #False : EndIf
+  Next
+  ProcedureReturn #True
+EndProcedure
+
 ; Load the index: env pin first, then a drop-in file next to the executable,
 ; then the DataSection-embedded copy, then the cache dir. Never
 ; throws - gIndexDetail$ always carries an actionable message.
@@ -281,12 +334,17 @@ Procedure DocsIndexInit()
       gIndexDetail$ = "Index " + path$ + " is not valid JSON: " + JSONErrorMessage() + " (line " + Str(JSONErrorLine()) + ")"
     Else
       root = JSONValue(j)
-      cmds = GetJSONMember(root, "commands")
-      refs = GetJSONMember(root, "reference")
+      cmds = 0 : refs = 0
+      If JSONType(root) = #PB_JSON_Object
+        cmds = GetJSONMember(root, "commands")
+        refs = GetJSONMember(root, "reference")
+      EndIf
       If cmds = 0 Or JSONType(cmds) <> #PB_JSON_Array Or refs = 0 Or JSONType(refs) <> #PB_JSON_Array
         gIndexDetail$ = "Index " + path$ + " failed schema validation: commands/reference arrays missing"
       ElseIf JSONArraySize(cmds) = 0
         gIndexDetail$ = "Docs index has no commands - build one: node tools/build-online-index.mjs <docsRoot> --out pbdocs-index.json (drop index-*.json next to the executable to switch help versions)"
+      ElseIf Not DocsEntriesValid(cmds, #False) Or Not DocsEntriesValid(refs, #True)
+        gIndexDetail$ = "Index " + path$ + " failed schema validation: invalid command or reference entry"
       Else
         Break
       EndIf

@@ -337,6 +337,17 @@ Procedure KillTree(Pid.i)
   CompilerEndIf
 EndProcedure
 
+Procedure CaptureErrorLine(Line$, List Lines$(), *Count.Integer, *Truncated.Integer)
+  ; shortcut: ReadProgramError allocates a full line; use raw pipe reads if peak memory needs a strict cap.
+  Protected remaining.i = #MAX_CAPTURE_CHARS - *Count\i
+  If Len(Line$) + 1 > remaining : *Truncated\i = #True : EndIf
+  If remaining > 0
+    AddElement(Lines$())
+    Lines$() = Left(Line$, remaining - 1)
+    *Count\i + Len(Lines$()) + 1
+  EndIf
+EndProcedure
+
 ; runProcess port: spawn without shell, capture stdout/stderr, enforce the
 ; timeout, kill the tree on timeout. Stdout is captured as raw bytes and
 ; decoded UTF-8 once at the end (a multibyte char can never split across two
@@ -443,13 +454,7 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
       e$ = ReadProgramError(p)
       If e$ = "" : Break : EndIf
       gotErr = #True
-      If errChars < #MAX_CAPTURE_CHARS
-        AddElement(errLines$())
-        errLines$() = e$
-        errChars + Len(e$) + 1   ; a line that pushes past the cap is still
-      Else                       ; appended in full, exactly like today
-        errTruncated = #True
-      EndIf
+      CaptureErrorLine(e$, errLines$(), @errChars, @errTruncated)
     Wend
 
     If killIssued = #False And ElapsedMilliseconds() - t0 >= TimeoutMs
@@ -507,13 +512,7 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
   While #True
     e$ = ReadProgramError(p)
     If e$ = "" : Break : EndIf
-    If errChars < #MAX_CAPTURE_CHARS
-      AddElement(errLines$())
-      errLines$() = e$
-      errChars + Len(e$) + 1
-    Else
-      errTruncated = #True
-    EndIf
+    CaptureErrorLine(e$, errLines$(), @errChars, @errTruncated)
   Wend
 
   ; one linear join of the collected lines - same layout as the old

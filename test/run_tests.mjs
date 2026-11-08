@@ -225,7 +225,7 @@ console.log("\n[1] framing + multibyte (100-line session)");
   check("response id sequence intact", idsOk);
   check("initialize result well-formed", initOk);
   check("tools/list returns the 5 registered tools", listOk);
-  const unknownCallResp = parsed.find((o) => o?.result?.isError === true);
+  const unknownCallResp = parsed.find((o) => o?.error?.code === -32602);
   check("multibyte tool name round-trips in error text",
     !!unknownCallResp && unknownNames.every((n) => pipeMode.stdout.toString("utf8").includes(n)));
 
@@ -282,9 +282,9 @@ console.log("\n[2] protocol + pb_version");
   check("ping result is empty object", !!ping?.result && deepEqual(ping.result, {}));
 
   const unknown = r.byId.get(4);
-  check("unknown tool -> isError text 'MCP error -32602: Tool no_such_tool not found'",
-    unknown?.result?.isError === true &&
-    text(unknown) === "MCP error -32602: Tool no_such_tool not found", text(unknown));
+  check("unknown tool -> JSON-RPC -32602",
+    unknown?.error?.code === -32602 &&
+    unknown.error.message === "Tool no_such_tool not found" && !unknown.result, JSON.stringify(unknown));
 
   const malformed = r.msgs.find((m) => m.id === null);
   check("malformed line -> -32700 Parse error, id null",
@@ -881,7 +881,7 @@ try {
 }
 
 console.log("\n[12] compiler workflow, stdio lifecycle, and crawler regressions");
-for (const test of ["compiler.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs"]) {
+for (const test of ["protocol.mjs", "compiler.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs", "packaging.mjs"]) {
   try {
     console.log(execFileSync(process.execPath, [join(testDir, test)], {
       cwd: root, env: { ...pinEnv(), PBMCP_EXE: exe }, encoding: "utf8", timeout: 60000, windowsHide: true,

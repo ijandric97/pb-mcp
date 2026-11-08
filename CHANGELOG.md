@@ -23,6 +23,9 @@
 - Regression coverage for compiler/include behavior, preload and index discovery,
   process and pipe lifecycle, batch scanning, crawler failures, and local-help
   version validation and caching.
+- Dedicated protocol and packaging regression suites, plus tests for malformed
+  documentation entries, oversized stderr lines, stale mirror pages, partial
+  index writes, and publication/rollback failures.
 
 ### Changed
 
@@ -38,9 +41,38 @@
 - The embedded documentation was regenerated from the installed PureBasic 6.41
   help: 1,888 commands, 1,949 reference entries, and 103 unique reference bodies.
   Both the compiler and documentation now report 6.41 in the rebuilt artifacts.
+- The embedded index generation time and parser fingerprint reflect the audit
+  fixes; documentation records are unchanged.
+- `.gitattributes` preserves LF line endings for shell scripts, including
+  Windows checkouts used through WSL.
 
 ### Fixed
 
+- `tools/call` validates its params, tool name, and optional argument object
+  before reading members, preventing the missing-params crash. Request validation
+  rejects incorrect JSON-RPC versions, invalid request IDs, and invalid parameter
+  envelopes.
+- Documentation index loading validates command/reference records and nested
+  field types before constructing lookups or formatting entries. Invalid indexes
+  return diagnostics instead of crashing; legacy reference-text fallback remains
+  supported.
+- JSON-RPC request batches produce one response array, reject invalid members,
+  omit notifications, and reset batch state before the next message.
+- Unknown tools return JSON-RPC `-32602` errors instead of tool-result text.
+- `pb_run` correctly advertises that executed programs can make destructive
+  changes and interact with external systems.
+- Both stderr drain paths enforce the 4,194,304-character retention allowance,
+  including line terminators, and mark oversized output as truncated. The
+  underlying stderr API can still allocate a complete line temporarily.
+- Windows/Linux distributions are assembled and smoke-tested in staging before
+  replacing `dist/`. Build, copy, and smoke-test failures preserve the previous
+  bundle; failed publication attempts restore it where possible.
+- Online documentation refreshes use clean staging directories so obsolete pages
+  disappear. Working/source directory destinations are rejected, failed refreshes
+  preserve the previous mirror, and failed rollback retains a recoverable backup
+  with its location reported.
+- Online indexes are written to a sibling temporary file and renamed only after
+  the complete write succeeds, preserving the existing index on write failure.
 - Windows builds and both platforms' syntax checks enable the thread-safe runtime
   required by background documentation preload. The entry point rejects builds
   that omit this setting.
@@ -56,8 +88,8 @@
   before they can be silently altered. Empty, tab-containing, spaced, and trailing
   backslash arguments retain their values.
 - Online reference crawling tolerates HTTP 404/410 links while reporting exhausted
-  network and server failures. Failed refreshes invalidate old success manifests;
-  missing reference pages remove their stale local copies.
+  network and server failures. Failed refreshes preserve the previous successful
+  mirror and manifest; missing reference pages are omitted from refreshed mirrors.
 - Local-help indexing handles reference folder casing and the installed manual's
   keyword styling. Command coverage failures stop generation before replacing an
   existing index.
@@ -75,16 +107,21 @@
 
 ### Validation
 
-- Windows packaged acceptance suite: **161 passed, 0 failed**, including the
-  preload/path/index regression group and installed-help integration checks.
-- Native thread-safe syntax check, UTF-8 BOM lint, root build, and distribution
-  build passed with PureBasic 6.41.
-- Packaged RPC lookups verified local `CompilerIf` text, the installed `OpenWindow`
-  signature, and a command-target constant alias. Package files and the recorded
-  CHM content hash matched their sources. The restarted client confirmed matching
-  compiler/documentation versions and a working reference lookup.
-- Native Linux execution and a live online crawl were not rerun. HTML help layout
-  and version handling use local fixtures; crawler tests use a local HTTP server.
+- Windows source-build acceptance suite: **163 passed, 0 failed**, including
+  malformed requests/indexes, batch framing, bounded stderr, partial-write and
+  publication failures, packaging, and installed-help integration checks.
+- Native thread-safe syntax check, UTF-8 BOM lint, and the full source build
+  passed with PureBasic 6.41. Windows packaging tests covered build/copy/smoke
+  failures, replacement, and a locked executable. Linux packaging passed isolated
+  build/copy/smoke failure and replacement checks in WSL; all shell scripts passed
+  syntax checks and now retain LF line endings.
+- Earlier packaged RPC lookups verified local `CompilerIf` text, the installed
+  `OpenWindow` signature, and a command-target constant alias. Package files and
+  the recorded CHM content hash matched their sources. The restarted client
+  confirmed matching compiler/documentation versions and a working reference lookup.
+- The full Linux acceptance suite and a live online crawl were not rerun. HTML
+  help layout and version handling use local fixtures; crawler tests use a local
+  HTTP server.
 - Matching occurs during builds. Rebuild after upgrading or changing the compiler
   installation; explicit runtime index overrides can still select another version.
 

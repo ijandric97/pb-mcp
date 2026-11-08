@@ -13,9 +13,7 @@
 ;   - pb_docs_search / pb_command handlers incl. formatSearchResults /
 ;     formatCommandEntry and the did-you-mean path (per the plan's module
 ;     table)
-;   - dispatch: unknown tool -> "MCP error -32602: Tool <name> not found"
-;     as an isError text result; metrics
-;     moved into the compiler handlers (dispatch-level stub removed)
+;   - dispatch and protocol errors; metrics live in the compiler handlers
 ;
 ; Source-encoding rule: UTF-8 WITH BOM (see console.pb header). The em-dashes
 ; in the descriptions below double as the encoding canary.
@@ -427,7 +425,7 @@ Procedure ToolList(IdValue.i)
     "Console subsystem; 15 s default timeout. The project tree is copied to a bounded temporary workspace; " +
     "the program runs with the staged copy's entry directory as its working directory, so relative resources " +
     "and executable-relative DLLs resolve from the copied project; generated files are ephemeral.",
-    #False, #False, #False)
+    #False, #True, #True)
   AddStrProp(GetJSONMember(schema, "properties"), "file", "Path to the .pb source file (absolute, or relative to this server's cwd)", 1, 0)
   AddStrProp(GetJSONMember(schema, "properties"), "projectRoot", "Optional project directory to stage; defaults to the entry file's parent", 1, 0)
   AddArrayProp(GetJSONMember(schema, "properties"), "args", "Program arguments; double quotes, NUL, and newlines are unsupported and rejected")
@@ -447,14 +445,25 @@ Procedure ToolList(IdValue.i)
 EndProcedure
 
 ; ---------------------------------------------------------------------------
-; dispatch - metrics live in the compiler handlers now; unknown tool answer:
-; "MCP error -32602: Tool <name> not found"
+; dispatch - validate the call envelope before accessing its members
 ; ---------------------------------------------------------------------------
 Procedure ToolDispatch(IdValue.i, Params.i)
+  If Params = 0 Or JSONType(Params) <> #PB_JSON_Object
+    SendError(IdValue, -32602, "tools/call params must be an object")
+    ProcedureReturn
+  EndIf
   Protected name$ = MemberStr(Params, "name", "")
+  If name$ = ""
+    SendError(IdValue, -32602, "tools/call name must be a non-empty string")
+    ProcedureReturn
+  EndIf
   Protected args.i = GetJSONMember(Params, "arguments")
   If gHttpMode And Not gHttpAllowCompilerTools And (name$ = "pb_check" Or name$ = "pb_run" Or name$ = "pb_version")
     SendTextResult(IdValue, "Tool unavailable in this HTTP profile: " + name$, #True)
+    ProcedureReturn
+  EndIf
+  If args And JSONType(args) <> #PB_JSON_Object
+    SendError(IdValue, -32602, "tools/call arguments must be an object")
     ProcedureReturn
   EndIf
   Select name$
@@ -469,6 +478,6 @@ Procedure ToolDispatch(IdValue.i, Params.i)
     Case "pb_version"
       ToolVersion(IdValue, args)
     Default
-      SendTextResult(IdValue, "MCP error -32602: Tool " + name$ + " not found", #True)
+      SendError(IdValue, -32602, "Tool " + name$ + " not found")
   EndSelect
 EndProcedure

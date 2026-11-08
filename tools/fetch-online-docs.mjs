@@ -15,8 +15,9 @@
 // Writes <mirrorDir>/manifest.json on success. Reference HTTP 404/410 links
 // are tolerated; all other fetch failures exit 1 after retries.
 // ---------------------------------------------------------------------------
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
 let mirror = 'tmp/online-docs';
@@ -27,8 +28,14 @@ for (let i = 0; i < args.length; i++) {
 }
 if (!base.endsWith('/')) base += '/';
 
-// A previous successful crawl must not make a failed refresh look complete.
-rmSync(join(mirror, 'manifest.json'), { force: true });
+const target = resolve(mirror);
+for (const protectedPath of [process.cwd(), fileURLToPath(import.meta.url)]) {
+  const inside = relative(target, protectedPath);
+  if (inside === '' || (!isAbsolute(inside) && inside.split(sep)[0] !== '..')) {
+    console.error(`Refusing to replace a working or source directory: ${target}`);
+    process.exit(2);
+  }
+}
 
 const CONCURRENCY = 6;
 const RETRIES = 3;
@@ -116,44 +123,57 @@ const sortedRef = [...refSet].sort();
 
 console.log(`discovered ${cmdPages.length} command pages, ${sortedRef.length} reference pages`);
 
-// persist the mirror; command pages are fetched in parallel here
-mkdirSync(mirror, { recursive: true });
-writeFileSync(join(mirror, 'index.html'), Buffer.from(rootHtml, 'latin1'));
-mkdirSync(join(mirror, 'reference'), { recursive: true });
-writeFileSync(join(mirror, 'reference', 'commandindex.html'), Buffer.from(cmdHtml, 'latin1'));
-let done = 0, failed = [];
-await pool(cmdPages, async rel => {
-  try {
-    const buf = await fetchPage(base + rel);
-    const file = join(mirror, ...rel.split('/'));
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, buf);
-    done++;
-    if (done % 250 === 0) console.log(`  ${done}/${cmdPages.length} command pages`);
-  } catch (e) {
-    failed.push(e.message);
+// Build beside the destination so a failed refresh cannot damage the last mirror.
+mkdirSync(dirname(target), { recursive: true });
+const stage = mkdtempSync(join(dirname(target), `.${basename(target)}-`));
+const backup = `${stage}.previous`;
+let published = false;
+try {
+  writeFileSync(join(stage, 'index.html'), Buffer.from(rootHtml, 'latin1'));
+  mkdirSync(join(stage, 'reference'));
+  writeFileSync(join(stage, 'reference', 'commandindex.html'), Buffer.from(cmdHtml, 'latin1'));
+  let done = 0, failed = [];
+  await pool(cmdPages, async rel => {
+    try {
+      const buf = await fetchPage(base + rel);
+      const file = join(stage, ...rel.split('/'));
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, buf);
+      done++;
+      if (done % 250 === 0) console.log(`  ${done}/${cmdPages.length} command pages`);
+    } catch (e) {
+      failed.push(e.message);
+    }
+  });
+  if (failed.length) {
+    console.error(`FAILED ${failed.length} page(s):`);
+    for (const f of failed.slice(0, 20)) console.error('  ' + f);
+    process.exitCode = 1;
+  } else {
+    for (const [name, body] of refCache) {
+      if (name !== 'commandindex.html' && body !== null) writeFileSync(join(stage, 'reference', name), body);
+    }
+    const manifest = {
+      kind: 'online',
+      url: base,
+      crawledAt: new Date().toISOString(),
+      pages: cmdPages.length + refCache.size + 1,
+      commandPages: cmdPages.length,
+      referencePages: [...refCache.values()].filter(Boolean).length,
+    };
+    writeFileSync(join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    if (existsSync(target)) renameSync(target, backup);
+    renameSync(stage, target);
+    published = true;
+    console.log(`mirrored ${cmdPages.length + refCache.size + 1} pages -> ${mirror}`);
   }
-});
-if (failed.length) {
-  console.error(`FAILED ${failed.length} page(s):`);
-  for (const f of failed.slice(0, 20)) console.error('  ' + f);
-  process.exit(1);
-}
-for (const [name, body] of refCache) {
-  if (name === 'commandindex.html') continue; // written above
-  if (body === null) {
-    rmSync(join(mirror, 'reference', name), { force: true });
-    continue;
+} finally {
+  rmSync(stage, { recursive: true, force: true });
+  if (existsSync(backup)) {
+    if (published) rmSync(backup, { recursive: true, force: true });
+    else if (!existsSync(target)) {
+      try { renameSync(backup, target); }
+      catch (error) { console.error(`Previous mirror remains at ${backup}: ${error.message}`); }
+    } else console.error(`Previous mirror remains at ${backup}`);
   }
-  writeFileSync(join(mirror, 'reference', name), body);
 }
-const manifest = {
-  kind: 'online',
-  url: base,
-  crawledAt: new Date().toISOString(),
-  pages: cmdPages.length + refCache.size + 1,
-  commandPages: cmdPages.length,
-  referencePages: [...refCache.values()].filter(Boolean).length,
-};
-writeFileSync(join(mirror, 'manifest.json'), JSON.stringify(manifest, null, 2));
-console.log(`mirrored ${cmdPages.length + refCache.size + 1} pages -> ${mirror}`);

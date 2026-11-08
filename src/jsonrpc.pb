@@ -18,6 +18,9 @@ Global gHttpCapturedResponse.s = ""
 #SERVER_NAME$      = "purebasic-mcp-pb"
 #SERVER_VERSION$   = "0.4.0"   ; 0.4.0: Streamable HTTP transport (pbmcp http), project staging for pb_check/pb_run, preload default off on non-TS builds
 
+Global gBatchActive.i = #False
+Global gBatchResponses$ = ""
+
 ; serverInfo.version and the version CLI line share ServerVersionFull().
 ; The build stamp is the COMPILE date (#PB_Compiler_Date): a PB constant
 ; cannot call functions (probe-verified), so a procedure derives it per
@@ -255,38 +258,38 @@ Procedure.i JsonHasNul(Text$)
   ProcedureReturn #False
 EndProcedure
 
-Procedure HandleLine(Raw$)
-  Protected line$ = RTrim(Trim(Raw$), Chr(13))
-  If line$ = "" : ProcedureReturn : EndIf
-  If JsonHasNul(line$)
-    SendError(0, -32600, "NUL characters are not supported in JSON strings")
+Procedure HandleRequest(Root.i)
+  If JSONType(Root) <> #PB_JSON_Object
+    SendError(0, -32600, "Invalid Request")
     ProcedureReturn
   EndIf
-  Protected json.i = ParseJSON(#PB_Any, line$)
-  If json = 0
-    SendError(0, -32700, "Parse error")
-    ProcedureReturn
+  Protected idM.i = GetJSONMember(Root, "id")
+  If idM
+    Select JSONType(idM)
+      Case #PB_JSON_Number
+        Protected idNumber.d = GetJSONDouble(idM)
+        If idNumber <> Int(idNumber)
+          SendError(0, -32600, "Invalid Request")
+          ProcedureReturn
+        EndIf
+      Case #PB_JSON_String
+      Default
+        SendError(0, -32600, "Invalid Request")
+        ProcedureReturn
+    EndSelect
   EndIf
-  Protected root.i = JSONValue(json)
-  Protected idM.i = GetJSONMember(root, "id")   ; extracted before the method check: -32600 must echo the request id
-  Protected methodM.i = GetJSONMember(root, "method")
-  If methodM = 0 Or JSONType(methodM) <> #PB_JSON_String
-    ; JSON-RPC 2.0: missing/non-string method is an Invalid Request ->
-    ; -32600 with the id echoed (null when absent). Non-object roots
-    ; (arrays/numbers - e.g. unsupported batches) land here too: they have
-    ; no method member. Valid notifications with a method stay silently
-    ; ignored (handled below).
+  Protected methodM.i = GetJSONMember(Root, "method")
+  If MemberStr(Root, "jsonrpc", "") <> "2.0" Or methodM = 0 Or JSONType(methodM) <> #PB_JSON_String
     SendError(idM, -32600, "Invalid Request")
-    FreeJSON(json)
     ProcedureReturn
   EndIf
   Protected method$ = GetJSONString(methodM)
-  Protected isNotify.i = #False
-  If idM = 0 Or JSONType(idM) = #PB_JSON_Null
-    isNotify = #True
-    idM = 0
+  Protected isNotify.i = Bool(idM = 0)
+  Protected params.i = GetJSONMember(Root, "params")
+  If params And JSONType(params) <> #PB_JSON_Object
+    If Not isNotify : SendError(idM, -32602, "params must be an object") : EndIf
+    ProcedureReturn
   EndIf
-  Protected params.i = GetJSONMember(root, "params")
   Select method$
     Case "initialize"
       If Not isNotify
@@ -339,5 +342,32 @@ Procedure HandleLine(Raw$)
         SendError(idM, -32601, "Method not found: " + method$)
       EndIf
   EndSelect
+EndProcedure
+
+Procedure HandleLine(Raw$)
+  Protected line$ = RTrim(Trim(Raw$), Chr(13))
+  If line$ = "" : ProcedureReturn : EndIf
+  If JsonHasNul(line$)
+    SendError(0, -32600, "NUL characters are not supported in JSON strings")
+    ProcedureReturn
+  EndIf
+  Protected json.i = ParseJSON(#PB_Any, line$)
+  If json = 0
+    SendError(0, -32700, "Parse error")
+    ProcedureReturn
+  EndIf
+  Protected root.i = JSONValue(json), i.i
+  If JSONType(root) = #PB_JSON_Array And JSONArraySize(root) > 0
+    gBatchActive = #True
+    gBatchResponses$ = ""
+    For i = 0 To JSONArraySize(root) - 1
+      HandleRequest(GetJSONElement(root, i))
+    Next
+    gBatchActive = #False
+    If gBatchResponses$ <> "" : WriteLine("[" + gBatchResponses$ + "]") : EndIf
+    gBatchResponses$ = ""
+  Else
+    HandleRequest(root)
+  EndIf
   FreeJSON(json)
 EndProcedure

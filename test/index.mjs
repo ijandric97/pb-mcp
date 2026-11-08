@@ -67,8 +67,8 @@ writeFileSync(join(referenceDir, 'pbconstants.html'), `<html><body><table>
 </table></body></html>`);
 writeFileSync(join(referenceDir, 'long.html'), '<html><head><title>Long page</title></head><body><p>' + 'Long readable text. '.repeat(2000) + '</p></body></html>');
 const output = join(scratch, 'index.json');
-function build(binary = exe) {
-  return spawnSync(process.execPath, [join(root, 'tools', 'build-online-index.mjs'), docs, '--out', output,
+function build(binary = exe, nodeArgs = []) {
+  return spawnSync(process.execPath, [...nodeArgs, join(root, 'tools', 'build-online-index.mjs'), docs, '--out', output,
     '--pb-version', 'fixture', '--pbmcp', binary], { cwd: root, env, encoding: 'utf8', timeout: 30000, windowsHide: true });
 }
 const built = build();
@@ -111,7 +111,30 @@ assert.ok(command('Language constructs', legacy).includes('Local text is unavail
 const previous = readFileSync(output);
 assert.notEqual(build(join(scratch, 'missing-scanner')).status, 0);
 assert.deepEqual(readFileSync(output), previous, 'scanner failure replaced the working index');
+const commandIndex = readFileSync(join(referenceDir, 'commandindex.html'));
 writeFileSync(join(referenceDir, 'commandindex.html'), '<a href="../window/absent.html">AbsentCommand</a>');
 assert.notEqual(build().status, 0);
 assert.deepEqual(readFileSync(output), previous, 'coverage failure replaced the working index');
-console.log('index tests passed (batch parity/errors, builder coverage, offline text/aliases, legacy fallback, caps)');
+writeFileSync(join(referenceDir, 'commandindex.html'), commandIndex);
+const fault = join(scratch, 'write-failure.cjs');
+writeFileSync(fault, `const fs = require('node:fs');
+const path = require('node:path');
+const original = fs.writeFileSync;
+const output = ${JSON.stringify(output)};
+fs.writeFileSync = function(file, data, options) {
+  const target = path.resolve(String(file));
+  if (path.dirname(target) === path.dirname(output) &&
+      (target === output || /^\\.pbdocs-.*\\.json$/.test(path.basename(target)))) {
+    original.call(this, file, 'partial', options);
+    throw new Error('simulated partial write failure');
+  }
+  return original.call(this, file, data, options);
+};
+require('node:module').syncBuiltinESMExports();
+`);
+const failedWrite = build(exe, ['--require', fault]);
+assert.notEqual(failedWrite.status, 0);
+assert.match(failedWrite.stderr, /simulated partial write failure/);
+assert.deepEqual(readFileSync(output), previous, 'partial output write damaged the working index');
+assert.ok(!readdirSync(scratch).some(name => name.startsWith('.pbdocs-')), 'failed write left a staged index');
+console.log('index tests passed (batch parity/errors, coverage, atomic output, offline text/aliases, legacy fallback, caps)');
