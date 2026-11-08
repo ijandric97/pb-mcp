@@ -559,7 +559,7 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
   CompilerIf #PB_Compiler_OS = #PB_OS_Linux
     ; The worker leads the group and kills it if the server exits.
     p = RunProgram("setsid", ProcQ(ProgramFilename()) + " --job-worker " + Str(ProcessOwnPid()) + " " + Str(errorPipe\writer) + " " + ProcQ(Exe$) + " " + Params$, WorkingDir$,
-                   #PB_Program_Open | #PB_Program_Read | #PB_Program_Hide)
+                   #PB_Program_Open | #PB_Program_Read | #PB_Program_Write | #PB_Program_Hide)
   CompilerElse
     Protected jobName$ = "Local\pbmcp-" + Str(GetCurrentProcessId_()) + "-" + Str(ElapsedMilliseconds()) + "-" + Str(Random(2147483647))
     Protected eventName$ = jobName$ + "-started"
@@ -571,7 +571,7 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
         started = CreateEvent_(0, #True, #False, @eventName$)
         If started And GetLastError_() <> #ERROR_ALREADY_EXISTS
           p = RunProgram(ProgramFilename(), "--job-worker " + ProcQ(jobName$) + " " + Str(errorPipe\writer) + " " + ProcQ(Exe$) + " " + Params$, WorkingDir$,
-                         #PB_Program_Open | #PB_Program_Read | #PB_Program_Hide)
+                         #PB_Program_Open | #PB_Program_Read | #PB_Program_Write | #PB_Program_Hide)
         EndIf
       EndIf
     EndIf
@@ -588,6 +588,9 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
     *r\durationMs = ElapsedMilliseconds() - t0
     ProcedureReturn
   EndIf
+
+  ; Compiler/program children receive EOF instead of the MCP client's stdin.
+  WriteProgramData(p, #PB_Program_Eof, 0)
 
   Protected output.CaptureT, errors.CaptureT
   Protected killIssued.i = #False, n.i, available.i, drains.i, panicAt.i = TimeoutMs + 10000

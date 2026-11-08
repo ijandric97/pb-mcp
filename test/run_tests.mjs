@@ -619,6 +619,7 @@ console.log("\n[6] metrics (temp metrics file; shared live file untouched)");
       check(`record ${i}: ok=true, errorCount=0, buckets=[]`,
         rec.ok === true && rec.errorCount === 0 && Array.isArray(rec.buckets) && rec.buckets.length === 0);
       check(`record ${i}: ts Date.parse-able`, !Number.isNaN(Date.parse(rec.ts)), rec.ts);
+      check(`record ${i}: ts has UTC zone`, /Z$/.test(rec.ts), rec.ts);
       check(`record ${i}: durationMs >= 0`, typeof rec.durationMs === "number" && rec.durationMs >= 0);
     });
     check("record tools in call order", JSON.parse(recs[0]).tool === "pb_check" && JSON.parse(recs[1]).tool === "pb_run");
@@ -882,7 +883,7 @@ try {
 }
 
 console.log("\n[12] compiler workflow, stdio lifecycle, and crawler regressions");
-for (const test of ["protocol.mjs", "compiler.mjs", "processes.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs", "packaging.mjs"]) {
+for (const test of ["protocol.mjs", "compiler.mjs", "processes.mjs", "metrics.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs", "build.mjs", "packaging.mjs"]) {
   try {
     console.log(execFileSync(process.execPath, [join(testDir, test)], {
       cwd: root, env: { ...pinEnv(), PBMCP_EXE: exe }, encoding: "utf8", timeout: 60000, windowsHide: true,

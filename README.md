@@ -35,7 +35,8 @@ The compiler tools (`pb_check`, `pb_run`) work without an index.
   - Linux: `PUREBASIC_HOME` → `~/purebasic` → `/opt/purebasic` →
     `/usr/local/purebasic` → `pbcompiler` on `PATH`
 - **Node.js 18+** — required for source builds to index the selected compiler's
-  installed help. Running the packaged server needs no Node.
+  installed help and for syntax-only source checks. Running the packaged server
+  needs no Node.
 - **Installed PureBasic help** — Windows uses `PureBasic.chm`; Linux uses the
   installed HTML help tree. Windows tries its built-in `hh.exe` extractor,
   then 7-Zip (`7z`/`7zz` on PATH or its standard Windows install location).
@@ -209,6 +210,7 @@ passed as separate program parameters. Its executable and compiler artifacts sta
 storage, while relative includes and runtime data paths use the original source.
 Remaining processes in each run's Windows job or Linux process group are
 terminated after normal exit, timeout, or server termination.
+Compiler and program stdin is a separate closed pipe (EOF).
 
 ## Client configuration
 
@@ -256,12 +258,16 @@ shape under `"mcpServers"`. On Linux the command is e.g.
     pbmcp.exe test <file>                          replay a golden .jsonl session (test runner)
     pbmcp.exe http --port 6817 --auth-file <path>  authenticated loopback HTTP (see [HTTP transport](#http-transport))
 
-Source builds include the short Git revision in every version report, with
-`-dirty` for tracked changes. Builds without Git metadata report `unknown`.
+Source builds include the short Git revision in every version report. The
+`-dirty` suffix includes tracked changes made while generating the embedded
+docs index; builds without Git metadata report `unknown`.
 
 Protocol: MCP over stdio — JSON-RPC 2.0, newline-framed UTF-8,
 `2025-03-26`; the optional HTTP mode speaks stateless Streamable HTTP with
 `2025-11-25`.
+JSON integer literals must fit the signed 64-bit range; larger identifiers can
+be sent as strings. Out-of-range integer literals reject the request line with
+error `-32600` and a null ID.
 Each stdin request line is limited to 1 MiB (1,048,576 bytes before the LF).
 An oversized line receives error `-32600` with a null ID and is discarded
 through its next LF; subsequent requests are processed normally.
@@ -289,6 +295,7 @@ available for diagnostics and existing scripts.
 The metrics file defaults to `<cache>/purebasic-mcp/metrics.jsonl`, where
 `<cache>` is `%LOCALAPPDATA%` on Windows and `${XDG_CACHE_HOME:-~/.cache}`
 on Linux.
+New records use UTC timestamps with a `Z` suffix; existing records are preserved.
 
 ## PureBasic version support
 
@@ -393,8 +400,7 @@ Set `PUREBASIC_HOME` to the installation to test.
     src/tool_run.pb    pb_run (staged compile/run, timeout, tree-kill)
     src/tools.pb       tool registry, tools/list schemas, docs tool handlers
     src/http.pb        bounded authenticated loopback Streamable HTTP adapter
-    tools/lint_encoding.mjs   build-time encoding gate (Windows, using Node.js)
-    tools/lint_encoding.sh    build-time encoding gate (Linux; same BOM rule)
+    tools/lint_encoding.mjs   shared build-time encoding gate (using Node.js)
     build.sh / make-dist.sh   Linux build + packaging (build.cmd / make-dist.cmd ports)
     tools/fetch-online-docs.mjs   mirror the official online docs
     tools/build-online-index.mjs  docs index + shared reference text from a docs tree
@@ -404,9 +410,9 @@ Set `PUREBASIC_HOME` to the installation to test.
 ## Source-encoding rule
 
 All `src/*.pb` are **UTF-8 with BOM**. BOM-less UTF-8 is silently misread as
-CP-1252 by the PB compilers; the lint in `build.cmd` enforces the BOM, and
-stub outputs carry a deliberate em-dash canary so an encoding regression is
-visible in tool output.
+CP-1252 by the PB compilers; the Node lint in both build scripts enforces the
+BOM, and stub outputs carry a deliberate em-dash canary so an encoding
+regression is visible in tool output.
 
 ## Status
 

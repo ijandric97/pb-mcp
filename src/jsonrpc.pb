@@ -259,6 +259,45 @@ Procedure.i JsonHasNul(Text$)
   ProcedureReturn #False
 EndProcedure
 
+; ParseJSON silently wraps integer literals outside the signed 64-bit range.
+Procedure.i JsonHasIntegerOverflow(Text$)
+  Protected i.i = 1, length.i = Len(Text$), c.i, start.i, real.i, limit$
+  While i <= length
+    c = PeekU(@Text$ + (i - 1) * SizeOf(Character))
+    If c = 34
+      i + 1
+      While i <= length
+        c = PeekU(@Text$ + (i - 1) * SizeOf(Character))
+        i + 1
+        If c = 92
+          i + 1
+        ElseIf c = 34
+          Break
+        EndIf
+      Wend
+    ElseIf c = 45 Or (c >= 48 And c <= 57)
+      start = i
+      limit$ = "9223372036854775807"
+      If c = 45 : start + 1 : limit$ = "9223372036854775808" : EndIf
+      real = #False
+      i + 1
+      While i <= length
+        c = PeekU(@Text$ + (i - 1) * SizeOf(Character))
+        If (c < 48 Or c > 57) And c <> 43 And c <> 45 And c <> 46 And c <> 69 And c <> 101 : Break : EndIf
+        If c = 46 Or c = 69 Or c = 101 : real = #True : EndIf
+        i + 1
+      Wend
+      If Not real
+        If i - start > 19 : ProcedureReturn #True : EndIf
+        If i - start = 19 And Mid(Text$, start, 19) > limit$ : ProcedureReturn #True : EndIf
+      EndIf
+    Else
+      i + 1
+    EndIf
+  Wend
+  ProcedureReturn #False
+EndProcedure
+
 Procedure HandleRequest(Root.i)
   If JSONType(Root) <> #PB_JSON_Object
     SendError(0, -32600, "Invalid Request")
@@ -269,7 +308,8 @@ Procedure HandleRequest(Root.i)
     Select JSONType(idM)
       Case #PB_JSON_Number
         Protected idNumber.d = GetJSONDouble(idM)
-        If idNumber <> Int(idNumber)
+        Protected idIntegerNumber.d = GetJSONInteger(idM)
+        If idNumber <> idIntegerNumber
           SendError(0, -32600, "Invalid Request")
           ProcedureReturn
         EndIf
@@ -368,6 +408,11 @@ Procedure HandleLine(Raw$)
   Protected json.i = ParseJSON(#PB_Any, line$)
   If json = 0
     SendError(0, -32700, "Parse error")
+    ProcedureReturn
+  EndIf
+  If JsonHasIntegerOverflow(line$)
+    FreeJSON(json)
+    SendError(0, -32600, "JSON integer is outside the signed 64-bit range")
     ProcedureReturn
   EndIf
   Protected root.i = JSONValue(json), i.i

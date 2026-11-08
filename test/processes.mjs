@@ -110,6 +110,46 @@ for (const mode of ['normal', 'timeout', 'server-exit']) {
   }
 }
 
+const stdinReader = join(scratch, 'stdin-reader.pb');
+const stdinReady = join(scratch, 'stdin-ready');
+writeFileSync(stdinReader, '\uFEFF' + `EnableExplicit
+If OpenConsole() = 0 : End 1 : EndIf
+Define ready.i = CreateFile(#PB_Any, GetEnvironmentVariable("PBMCP_STDIN_READY"))
+If ready = 0 : End 2 : EndIf
+CloseFile(ready)
+Define byte.a, bytes.i = ReadConsoleData(@byte, 1)
+PrintN("stdin-bytes=" + Str(bytes))
+CloseConsole()
+`);
+const stdinServer = spawn(exe, [], { env: { ...env, PBMCP_STDIN_READY: stdinReady },
+  windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+let stdinOutput = '', stdinError = '', stdinFailure;
+stdinServer.stdout.setEncoding('utf8').on('data', value => stdinOutput += value);
+stdinServer.stderr.setEncoding('utf8').on('data', value => stdinError += value);
+stdinServer.on('error', error => { stdinFailure = error; });
+stdinServer.stdin.on('error', error => { stdinFailure = error; });
+const stdinClosed = new Promise(resolve => stdinServer.on('close', resolve));
+const stdinTimer = setTimeout(() => stdinServer.kill('SIGKILL'), 15000);
+try {
+  stdinServer.stdin.write(request('pb_run', { file: stdinReader, timeoutMs: 3000 }));
+  const deadline = performance.now() + 10000;
+  while (!existsSync(stdinReady) && stdinServer.exitCode === null && performance.now() < deadline && !stdinFailure) await sleep(10);
+  assert.ifError(stdinFailure);
+  assert.ok(existsSync(stdinReady), 'stdin reader never started: ' + stdinError);
+  stdinServer.stdin.end(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' }) + '\n');
+  assert.equal(await stdinClosed, 0, stdinError);
+  assert.ifError(stdinFailure);
+  const responses = stdinOutput.trim().split('\n').map(JSON.parse);
+  assert.equal(responses.length, 2, stdinOutput);
+  assert.equal(responses[0].result.isError, false, stdinOutput);
+  assert.match(responses[0].result.content[0].text, /stdin-bytes=0/);
+  assert.deepEqual(responses[1], { jsonrpc: '2.0', id: 2, result: {} }, 'child consumed an MCP request');
+} finally {
+  clearTimeout(stdinTimer);
+  if (stdinServer.exitCode === null) stdinServer.kill('SIGKILL');
+  await stdinClosed;
+}
+
 // Exercise both real reporters with the state produced by PATH-only discovery.
 const reportSource = join(scratch, 'path-report.pb');
 const reporter = join(scratch, win ? 'path-report.exe' : 'path-report');
@@ -135,4 +175,4 @@ const fragmentReport = call(exe, 'pb_version', {}, { PUREBASIC_HOME: fakeHome },
 const elapsed = performance.now() - started;
 assert.match(fragmentReport.result.content[0].text, /PureBasic 6\.41 — /);
 assert.ok(elapsed >= 14500 && elapsed < 18000, `version deadline was bypassed: ${elapsed} ms`);
-console.log(`process tests passed (descendants on success/timeout/server exit, both PATH reporters, partial-line version timeout ${Math.round(elapsed)}ms)`);
+console.log(`process tests passed (stdin isolation, descendants on success/timeout/server exit, both PATH reporters, partial-line version timeout ${Math.round(elapsed)}ms)`);

@@ -19,8 +19,9 @@ versions) at any time:
     pbmcp[.exe] version            CLI report, exit 0
 
 or ask the agent to call its `pb_version` tool once connected.
-Source builds also report their Git revision (`-dirty` means tracked changes;
-`unknown` means the build had no Git metadata).
+Source builds also report their Git revision. The `-dirty` suffix includes
+tracked changes made while generating the embedded docs index; `unknown` means
+the build had no Git metadata.
 
 ## 1. Requirements
 
@@ -339,6 +340,7 @@ Claude Code — copy to `~/.claude/skills/purebasic/`. Other clients: drop the
 The metrics file defaults to `<cache>/purebasic-mcp/metrics.jsonl`, where
 `<cache>` is `%LOCALAPPDATA%` on Windows and `${XDG_CACHE_HOME:-~/.cache}`
 on Linux.
+New records use UTC timestamps with a `Z` suffix; existing records are preserved.
 
 ## Troubleshooting
 

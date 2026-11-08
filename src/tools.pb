@@ -416,7 +416,7 @@ Procedure ToolList(IdValue.i)
     "Console programs only — a GUI program will block until timeout; use pb_check for GUI code instead. " +
     "Console subsystem; 15 s default timeout. The project tree is copied to a bounded temporary workspace; " +
     "the program runs with the staged copy's entry directory as its working directory, so relative resources " +
-    "and executable-relative DLLs resolve from the copied project; generated files are ephemeral.",
+    "and executable-relative DLLs resolve from the copied project; generated files are ephemeral. Program stdin is closed (EOF).",
     #False, #True, #True)
   AddStrProp(GetJSONMember(schema, "properties"), "file", "Path to the .pb source file (absolute, or relative to this server's cwd)", 1, 0)
   AddStrProp(GetJSONMember(schema, "properties"), "projectRoot", "Optional project directory to stage; defaults to the entry file's parent", 1, 0)

@@ -42,6 +42,34 @@ for (const [message, code, id] of invalid) {
   assert.deepEqual(responses[1], { jsonrpc: '2.0', id: 'still-alive', result: {} });
 }
 
+// Raw JSON preserves integer boundaries that JavaScript Number would round.
+for (const [id, valid] of [
+  ['9223372036854775807', true], ['-9223372036854775808', true], ['9007199254740993', true],
+  ['9223372036854775808', false], ['-9223372036854775809', false],
+  ['18446744073709551616', false], ['-18446744073709551616', false], ['1e100', false],
+  ['9223372036854775808.0', false],
+]) {
+  const result = spawnSync(exe, [], { cwd: root, env, encoding: 'utf8', timeout: 5000, windowsHide: true,
+    input: `{"jsonrpc":"2.0","id":${id},"method":"ping"}\n` + JSON.stringify(request('after-numeric-id')) + '\n' });
+  assert.equal(result.status, 0, result.stderr || String(result.error));
+  const lines = result.stdout.trim().split('\n');
+  assert.equal(lines.length, 2);
+  const response = JSON.parse(lines[0]);
+  if (valid) {
+    assert.deepEqual(response.result, {}, lines[0]);
+    assert.equal(/"id":(-?\d+)/.exec(lines[0])?.[1], id, 'numeric ID changed');
+  } else {
+    assert.equal(response.id, null, lines[0]);
+    assert.equal(response.error?.code, -32600, lines[0]);
+  }
+  assert.deepEqual(JSON.parse(lines[1]), { jsonrpc: '2.0', id: 'after-numeric-id', result: {} });
+}
+for (const id of ['9223372036854775808', 'quote "9223372036854775808"', 'slash \\"9223372036854775808']) {
+  assert.deepEqual(session([request(id)])[0], { jsonrpc: '2.0', id, result: {} });
+}
+assert.deepEqual(session([{ ...request('fraction-in-params'), params: { value: 0.12345678901234567890, exponent: 1e100 } }])[0],
+  { jsonrpc: '2.0', id: 'fraction-in-params', result: {} });
+
 const invalidInitialize = [
   request(1, 'initialize'),
   ...[null, [], 'bad'].map(params => request(1, 'initialize', params)),
@@ -106,4 +134,4 @@ const unfinished = spawnSync(exe, [], { input: padded(frameLimit * 3), cwd: root
 assert.equal(unfinished.status, 0, unfinished.stderr || String(unfinished.error));
 assert.equal(unfinished.stdout.trim().split('\n').length, 1);
 assert.equal(JSON.parse(unfinished.stdout).error.code, -32600);
-console.log('protocol tests passed (invalid envelopes/calls, batch framing, notifications, execution hints, unknown tools)');
+console.log('protocol tests passed (invalid envelopes/calls, numeric ID boundaries, batch framing, notifications, execution hints, unknown tools)');

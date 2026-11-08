@@ -58,6 +58,16 @@
 
 ### Fixed
 
+- Compiler/program stdin uses a separate closed pipe, preventing launched code
+  from consuming later MCP requests.
+- Out-of-range JSON integer literals are rejected before dispatch instead of
+  wrapping request IDs. Valid signed 64-bit ID boundaries retain their values.
+- Metrics timestamps use UTC with a `Z` suffix, avoiding ambiguous local times
+  when daylight saving time changes.
+- Build revision markers are calculated after documentation generation, so a
+  regenerated tracked index is included in the `-dirty` state.
+- Both platform builds use the Node.js encoding gate; removed the duplicate
+  shell implementation. Syntax-only source checks also require Node.js.
 - Compiler diagnostics and noise filtering scan and copy output once, avoiding
   repeated prefix scans and string growth on many short lines.
 - Online command pages with unexpected titles fail before publishing a mirror,

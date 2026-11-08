@@ -12,10 +12,8 @@
 ;   {"ts":"...","source":"mcp","tool":"pb_check","file":"...","ok":true,
 ;    "errorCount":0,"buckets":[],"durationMs":12}
 ;
-; Timestamp note: records carry local time in ISO form without a zone
-; suffix (PB core has no UTC conversion). JavaScript's Date.parse treats
-; offset-less ISO as LOCAL time, which resolves to the same absolute
-; instant - episode-gap math over the log stays correct.
+; Timestamp note: UTC ISO time with a Z suffix remains unambiguous across
+; machine time zones and daylight-saving changes.
 ;
 ; Scope note (plan wording "every tools/call"): ONLY the compiler tools
 ; (pb_check, pb_run) are logged - tools/call of the docs tools produce no
@@ -167,7 +165,7 @@ Procedure MetricsAppend(Tool$, File$, Ok.i, ErrorCount.i, List Buckets$(), Durat
     first = #False
   Wend
   buckets$ + "]"
-  Protected line$ = "{" + JsonQ("ts") + ":" + JsonQ(FormatDate("%yyyy-%mm-%ddT%hh:%ii:%ss", Date()))
+  Protected line$ = "{" + JsonQ("ts") + ":" + JsonQ(FormatDate("%yyyy-%mm-%ddT%hh:%ii:%ss", DateUTC()) + "Z")
   line$ + "," + JsonQ("source") + ":" + JsonQ(#METRICS_SOURCE$)
   line$ + "," + JsonQ("tool") + ":" + JsonQ(Tool$)
   line$ + "," + JsonQ("file") + ":" + JsonQ(File$)

@@ -1,4 +1,4 @@
-// Windows source builds already require Node.js; keep the BOM gate shell-independent.
+// Source builds already require Node.js; keep the BOM gate shell-independent.
 import { readFileSync, readdirSync } from 'node:fs';
 
 const source = new URL('../src/', import.meta.url);

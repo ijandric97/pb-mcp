@@ -40,7 +40,7 @@ if [ -z "$PBC" ]; then
 fi
 
 echo "build.sh: encoding lint - UTF-8 BOM required on all src/*.pb"
-if ! bash tools/lint_encoding.sh; then
+if ! node tools/lint_encoding.mjs; then
   echo "build.sh: lint FAILED - fix source encoding before compiling"
   exit 1
 fi
@@ -55,13 +55,13 @@ if [ "${1:-}" = "check" ]; then
   exec "$PBC" --thread --check --console "$SRC"
 fi
 
-REVISION=$(git rev-parse --short HEAD 2>/dev/null) || REVISION=unknown
-if [ "$REVISION" != unknown ] && ! git diff --quiet HEAD --; then REVISION="$REVISION-dirty"; fi
-
 if ! node tools/build-local-index.mjs --compiler "$PBC" --out src/pbdocs-index.json; then
   echo "build.sh: local help indexing FAILED - Node.js and matching installed help are required"
   exit 1
 fi
+
+REVISION=$(git rev-parse --short HEAD 2>/dev/null) || REVISION=unknown
+if [ "$REVISION" != unknown ] && ! git diff --quiet HEAD --; then REVISION="$REVISION-dirty"; fi
 
 echo "build.sh: compiling \"$SRC\" (--thread: required on Linux, see header)"
 "$PBC" --thread --console "$SRC" --output "$OUT" --constant "PBMCP_REVISION\$=$REVISION"
