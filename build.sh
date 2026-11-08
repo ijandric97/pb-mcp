@@ -6,6 +6,7 @@
 #         build.sh check    thread-safe --check on the complete source tree
 #                           (the switch form is the Linux one:
 #                           /SWITCH switches do not exist here)
+#         build.sh test     build + run the acceptance suite
 #
 # Both builds require thread safety: documentation preload uses the runtime
 # concurrently with request handling (--thread here, /THREAD on Windows).
@@ -69,5 +70,10 @@ RC=$?
 if [ $RC -ne 0 ] || [ ! -f "$OUT" ]; then
   echo "build.sh: compile FAILED"
   exit 1
+fi
+if [ "${1:-}" = "test" ]; then
+  case "$OUT" in /*) ;; *) OUT="$PWD/$OUT" ;; esac
+  echo "build.sh: testing \"$OUT\""
+  PBMCP_EXE="$OUT" node test/run_tests.mjs || exit $?
 fi
 echo "build.sh: OK - \"$OUT\""

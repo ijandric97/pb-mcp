@@ -13,7 +13,9 @@ const env = { ...process.env, PUREBASIC_MCP_NO_METRICS: '1', PBMCP_DOCS_TIMING: 
 const request = (id, method = 'ping', params) => ({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
 const initParams = { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'protocol-test', version: '0' } };
 function session(messages, fileMode = false) {
-  const input = messages.map(JSON.stringify).join('\n') + '\n';
+  return rawSession(messages.map(JSON.stringify).join('\n') + '\n', fileMode);
+}
+function rawSession(input, fileMode = false) {
   const file = join(scratch, 'session.jsonl');
   if (fileMode) writeFileSync(file, input);
   const result = spawnSync(exe, fileMode ? ['test', file] : [], {
@@ -43,11 +45,16 @@ for (const [message, code, id] of invalid) {
 }
 
 // Raw JSON preserves integer boundaries that JavaScript Number would round.
-for (const [id, valid] of [
-  ['9223372036854775807', true], ['-9223372036854775808', true], ['9007199254740993', true],
-  ['9223372036854775808', false], ['-9223372036854775809', false],
-  ['18446744073709551616', false], ['-18446744073709551616', false], ['1e100', false],
-  ['9223372036854775808.0', false],
+for (const [id, expected] of [
+  ['9223372036854775807', '9223372036854775807'], ['-9223372036854775808', '-9223372036854775808'],
+  ['9007199254740993', '9007199254740993'], ['9007199254740993.0', '9007199254740993'],
+  ['9007199254740993e0', '9007199254740993'], ['92233720368547758070e-1', '9223372036854775807'],
+  ['-9.223372036854775808e18', '-9223372036854775808'], ['1.0', '1'], ['1e3', '1000'],
+  ['100e-2', '1'], ['0.1e1', '1'], ['0e9999999999999999999999', '0'],
+  ['1e+' + '0'.repeat(1000) + '2', '100'],
+  ...['9223372036854775808', '-9223372036854775809', '18446744073709551616', '-18446744073709551616',
+    '1e100', '9223372036854775808.0', '1.0000000000000001', '1e-5000',
+    '1e9999999999999999999999', '-9223372036854775809e0'].map(id => [id, null]),
 ]) {
   const result = spawnSync(exe, [], { cwd: root, env, encoding: 'utf8', timeout: 5000, windowsHide: true,
     input: `{"jsonrpc":"2.0","id":${id},"method":"ping"}\n` + JSON.stringify(request('after-numeric-id')) + '\n' });
@@ -55,14 +62,33 @@ for (const [id, valid] of [
   const lines = result.stdout.trim().split('\n');
   assert.equal(lines.length, 2);
   const response = JSON.parse(lines[0]);
-  if (valid) {
+  if (expected !== null) {
     assert.deepEqual(response.result, {}, lines[0]);
-    assert.equal(/"id":(-?\d+)/.exec(lines[0])?.[1], id, 'numeric ID changed');
+    assert.equal(/"id":(-?\d+)/.exec(lines[0])?.[1], expected, 'numeric ID changed: ' + id);
   } else {
     assert.equal(response.id, null, lines[0]);
     assert.equal(response.error?.code, -32600, lines[0]);
   }
   assert.deepEqual(JSON.parse(lines[1]), { jsonrpc: '2.0', id: 'after-numeric-id', result: {} });
+}
+for (const fileMode of [false, true]) {
+  const raw = [
+    String.raw`{"jsonrpc":"2.0","\u0069d":5.0,"method":"ping"}`,
+    String.raw`{"jsonrpc":"2.0","i\u0064":7e0,"method":"ping","params":{"id":1e100}}`,
+    String.raw`{"jsonrpc":"2.0","\u0069\u0064":-7.0,"method":"ping"}`,
+    '{"jsonrpc":"2.0","id":1.5,"id":8,"method":"ping"}',
+    '{"jsonrpc":"2.0","id":1.5,"id":"string-id","method":"ping"}',
+  ];
+  const replies = rawSession('[' + raw.join(',') + ']\n', fileMode)[0];
+  assert.equal(replies.length, raw.length);
+  assert.deepEqual(replies.map(r => r.result), raw.map(() => ({})));
+  assert.deepEqual(replies.map(r => r.id), [5, 7, -7, 8, 'string-id']);
+  const [mixed] = rawSession('[null,[],{"jsonrpc":"2.0","id":1.0000000000000001,"method":"ping"},' +
+    '{"jsonrpc":"2.0","id":10e1,"method":"ping","params":{"id":1e100,"text":"id: 2e5"}}]\n', fileMode);
+  assert.deepEqual(mixed.map(r => r.id), [null, null, null, 100]);
+  assert.deepEqual(mixed.slice(0, 3).map(r => r.error.code), [-32600, -32600, -32600]);
+  assert.deepEqual(mixed[3].result, {});
+  assert.equal(rawSession('not-json 9223372036854775808\n', fileMode)[0].error.code, -32700);
 }
 for (const id of ['9223372036854775808', 'quote "9223372036854775808"', 'slash \\"9223372036854775808']) {
   assert.deepEqual(session([request(id)])[0], { jsonrpc: '2.0', id, result: {} });
@@ -115,11 +141,9 @@ assert.equal(session([request(1, 'tools/call', { name: 'missing' })])[0].error.c
 const frameLimit = 1024 * 1024;
 const ping = JSON.stringify(request('boundary'));
 const padded = bytes => ping + ' '.repeat(bytes - Buffer.byteLength(ping));
-for (const bytes of [frameLimit, frameLimit + 1, frameLimit * 3]) {
+for (const fileMode of [false, true]) for (const bytes of [frameLimit, frameLimit + 1, frameLimit * 3]) {
   const input = padded(bytes) + '\n' + JSON.stringify(request('after-large-frame')) + '\n';
-  const result = spawnSync(exe, [], { input, cwd: root, env, encoding: 'utf8', timeout: 5000, windowsHide: true });
-  assert.equal(result.status, 0, result.stderr || String(result.error));
-  const [first, next, extra] = result.stdout.trim().split('\n').map(JSON.parse);
+  const [first, next, extra] = rawSession(input, fileMode);
   if (bytes === frameLimit) assert.deepEqual(first, { jsonrpc: '2.0', id: 'boundary', result: {} });
   else {
     assert.equal(first.id, null);
@@ -134,4 +158,33 @@ const unfinished = spawnSync(exe, [], { input: padded(frameLimit * 3), cwd: root
 assert.equal(unfinished.status, 0, unfinished.stderr || String(unfinished.error));
 assert.equal(unfinished.stdout.trim().split('\n').length, 1);
 assert.equal(JSON.parse(unfinished.stdout).error.code, -32600);
-console.log('protocol tests passed (invalid envelopes/calls, numeric ID boundaries, batch framing, notifications, execution hints, unknown tools)');
+
+// Count containers, not bracket characters in strings, and recover after rejection.
+for (const fileMode of [false, true]) {
+  for (const levels of [128, 129, 32770]) {
+    const nested = '['.repeat(levels - 2) + '0' + ']'.repeat(levels - 2);
+    const input = '{"jsonrpc":"2.0","id":1,"method":"ping","params":{"nested":' + nested + '}}\n';
+    const [first, next] = rawSession(input + JSON.stringify(request('after-depth')) + '\n', fileMode);
+    if (levels === 128) assert.deepEqual(first, { jsonrpc: '2.0', id: 1, result: {} });
+    else {
+      assert.equal(first.id, null);
+      assert.equal(first.error.code, -32600);
+      assert.match(first.error.message, /nesting exceeds 128/);
+    }
+    assert.deepEqual(next, { jsonrpc: '2.0', id: 'after-depth', result: {} });
+  }
+  const braces = '[]{}'.repeat(1000) + String.raw`\" [ } \\`;
+  assert.deepEqual(session([request(braces)], fileMode)[0], { jsonrpc: '2.0', id: braces, result: {} });
+  for (const invalid of [JSON.stringify(request(1)) + '\0garbage',
+    '{"jsonrpc":"2.0","id":"nul\0value","method":"ping"}', '\0',
+    JSON.stringify(request(1)) + ' '.repeat(65536) + '\0garbage']) {
+    const [first, next, extra] = rawSession(invalid + '\n' + JSON.stringify(request('after-nul')) + '\n', fileMode);
+    assert.equal(first.id, null);
+    assert.equal(first.error.code, -32600);
+    assert.match(first.error.message, /NUL/);
+    assert.deepEqual(next, { jsonrpc: '2.0', id: 'after-nul', result: {} });
+    assert.equal(extra, undefined);
+    assert.equal(rawSession(invalid, fileMode)[0].error.code, -32600, 'unterminated NUL frame accepted');
+  }
+}
+console.log('protocol tests passed (envelopes/calls, exact numeric IDs, depth/NUL/frame limits and recovery, batch framing, notifications, execution hints, unknown tools)');

@@ -259,12 +259,17 @@ Procedure.i JsonHasNul(Text$)
   ProcedureReturn #False
 EndProcedure
 
-; ParseJSON silently wraps integer literals outside the signed 64-bit range.
-Procedure.i JsonHasIntegerOverflow(Text$)
+#MAX_JSON_DEPTH = 128
+
+; Guard the native parser and retain numeric IDs before floating-point rounding.
+Procedure.i JsonPreflight(Text$, Map NumericIds.s(), *integerOverflow.Integer)
   Protected i.i = 1, length.i = Len(Text$), c.i, start.i, real.i, limit$
+  Protected depth.i, requestDepth.i, request.i, idStart.i, key$, keyPos.i
+  *integerOverflow\i = #False
   While i <= length
     c = PeekU(@Text$ + (i - 1) * SizeOf(Character))
     If c = 34
+      start = i
       i + 1
       While i <= length
         c = PeekU(@Text$ + (i - 1) * SizeOf(Character))
@@ -275,6 +280,23 @@ Procedure.i JsonHasIntegerOverflow(Text$)
           Break
         EndIf
       Wend
+      If depth = requestDepth
+        key$ = Mid(Text$, start + 1, i - start - 2)
+        If key$ = "id" Or key$ = "\u0069d" Or key$ = "i\u0064" Or key$ = "\u0069\u0064"
+          keyPos = i
+          While keyPos <= length And FindString(" " + Chr(9) + Chr(10) + Chr(13), Mid(Text$, keyPos, 1))
+            keyPos + 1
+          Wend
+          If Mid(Text$, keyPos, 1) = ":"
+            keyPos + 1
+            While keyPos <= length And FindString(" " + Chr(9) + Chr(10) + Chr(13), Mid(Text$, keyPos, 1))
+              keyPos + 1
+            Wend
+            idStart = keyPos
+            DeleteMapElement(NumericIds(), Str(request))
+          EndIf
+        EndIf
+      EndIf
     ElseIf c = 45 Or (c >= 48 And c <= 57)
       start = i
       limit$ = "9223372036854775807"
@@ -288,17 +310,64 @@ Procedure.i JsonHasIntegerOverflow(Text$)
         i + 1
       Wend
       If Not real
-        If i - start > 19 : ProcedureReturn #True : EndIf
-        If i - start = 19 And Mid(Text$, start, 19) > limit$ : ProcedureReturn #True : EndIf
+        ; ParseJSON wraps oversized integer literals; report after syntax validation.
+        If i - start > 19 Or (i - start = 19 And Mid(Text$, start, 19) > limit$)
+          *integerOverflow\i = #True
+        EndIf
+      EndIf
+      If idStart = start Or (idStart = start - 1 And limit$ = "9223372036854775808")
+        NumericIds(Str(request)) = Mid(Text$, idStart, i - idStart)
       EndIf
     Else
+      If c = 123 Or c = 91
+        If depth = 0 : requestDepth = 1 + Bool(c = 91) : EndIf
+        depth + 1
+        If depth > #MAX_JSON_DEPTH : ProcedureReturn #False : EndIf
+      ElseIf c = 125 Or c = 93
+        depth - 1
+      ElseIf c = 44 And depth = 1 And requestDepth = 2
+        request + 1
+      EndIf
       i + 1
     EndIf
   Wend
-  ProcedureReturn #False
+  ProcedureReturn #True
 EndProcedure
 
-Procedure HandleRequest(Root.i)
+; Parse a validated JSON number as an exact signed integer, including .0/e forms.
+Procedure.i JsonIdInteger(Token$, *number.Quad)
+  If Token$ = "" : ProcedureReturn #False : EndIf
+  Protected negative.i = Bool(Left(Token$, 1) = "-"), exponent$, shift.i, pos.i, limit$ = "9223372036854775807"
+  If negative : Token$ = Mid(Token$, 2) : limit$ = "9223372036854775808" : EndIf
+  pos = FindString(LCase(Token$), "e")
+  If pos
+    exponent$ = Mid(Token$, pos + 1)
+    Token$ = Left(Token$, pos - 1)
+  EndIf
+  pos = FindString(Token$, ".")
+  If pos : shift = pos - Len(Token$) : Token$ = ReplaceString(Token$, ".", "") : EndIf
+  Token$ = LTrim(Token$, "0")
+  If Token$ = "" : *number\q = 0 : ProcedureReturn #True : EndIf
+  Protected exponentNegative.i = Bool(Left(exponent$, 1) = "-")
+  If Left(exponent$, 1) = "-" Or Left(exponent$, 1) = "+" : exponent$ = Mid(exponent$, 2) : EndIf
+  exponent$ = LTrim(exponent$, "0")
+  ; A nonzero value cannot cancel an exponent larger than the bounded frame.
+  If Len(exponent$) > Len(Str(#MAX_FRAME_BYTES)) : ProcedureReturn #False : EndIf
+  If exponentNegative : shift - Val(exponent$) : Else : shift + Val(exponent$) : EndIf
+  If shift < 0
+    If Len(Token$) + shift < 1 Or Len(RTrim(Token$, "0")) > Len(Token$) + shift : ProcedureReturn #False : EndIf
+    Token$ = Left(Token$, Len(Token$) + shift)
+  ElseIf shift > 0
+    If Len(Token$) + shift > 19 : ProcedureReturn #False : EndIf
+    Token$ + RSet("", shift, "0")
+  EndIf
+  If Len(Token$) > 19 Or (Len(Token$) = 19 And Token$ > limit$) : ProcedureReturn #False : EndIf
+  If negative : Token$ = "-" + Token$ : EndIf
+  *number\q = Val(Token$)
+  ProcedureReturn #True
+EndProcedure
+
+Procedure HandleRequest(Root.i, NumericId$)
   If JSONType(Root) <> #PB_JSON_Object
     SendError(0, -32600, "Invalid Request")
     ProcedureReturn
@@ -307,12 +376,12 @@ Procedure HandleRequest(Root.i)
   If idM
     Select JSONType(idM)
       Case #PB_JSON_Number
-        Protected idNumber.d = GetJSONDouble(idM)
-        Protected idIntegerNumber.d = GetJSONInteger(idM)
-        If idNumber <> idIntegerNumber
+        Protected idNumber.q
+        If Not JsonIdInteger(NumericId$, @idNumber)
           SendError(0, -32600, "Invalid Request")
           ProcedureReturn
         EndIf
+        SetJSONInteger(idM, idNumber)
       Case #PB_JSON_String
       Default
         SendError(0, -32600, "Invalid Request")
@@ -405,12 +474,18 @@ Procedure HandleLine(Raw$)
     SendError(0, -32600, "NUL characters are not supported in JSON strings")
     ProcedureReturn
   EndIf
+  NewMap numericIds.s()
+  Protected integerOverflow.i
+  If Not JsonPreflight(line$, numericIds(), @integerOverflow)
+    SendError(0, -32600, "JSON nesting exceeds " + Str(#MAX_JSON_DEPTH) + " levels")
+    ProcedureReturn
+  EndIf
   Protected json.i = ParseJSON(#PB_Any, line$)
   If json = 0
     SendError(0, -32700, "Parse error")
     ProcedureReturn
   EndIf
-  If JsonHasIntegerOverflow(line$)
+  If integerOverflow
     FreeJSON(json)
     SendError(0, -32600, "JSON integer is outside the signed 64-bit range")
     ProcedureReturn
@@ -420,13 +495,13 @@ Procedure HandleLine(Raw$)
     gBatchActive = #True
     gBatchResponses$ = ""
     For i = 0 To JSONArraySize(root) - 1
-      HandleRequest(GetJSONElement(root, i))
+      HandleRequest(GetJSONElement(root, i), numericIds(Str(i)))
     Next
     gBatchActive = #False
     If gBatchResponses$ <> "" : WriteLine("[" + gBatchResponses$ + "]") : EndIf
     gBatchResponses$ = ""
   Else
-    HandleRequest(root)
+    HandleRequest(root, numericIds("0"))
   EndIf
   FreeJSON(json)
 EndProcedure

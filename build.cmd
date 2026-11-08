@@ -5,6 +5,7 @@ rem build.cmd - build with the installed PureBasic compiler and matching help.
 rem
 rem Usage:  build.cmd         lint + compile pbmcp.exe
 rem         build.cmd check   thread-safe /CHECK on the complete source tree
+rem         build.cmd test    build + run the acceptance suite
 rem
 rem Paths are absolute (%~dp0); no shell mangling possible under cmd.exe.
 rem MSYS2_ARG_CONV_EXCL additionally guards /SWITCH args when this script is
@@ -59,6 +60,12 @@ echo build.cmd: compiling "%SRC%"
 if errorlevel 1 (
     echo build.cmd: compile FAILED
     exit /b 1
+)
+if /i "%~1"=="test" (
+    for %%I in ("%OUT%") do set "PBMCP_EXE=%%~fI"
+    echo build.cmd: testing "%OUT%"
+    node "%~dp0test\run_tests.mjs"
+    if errorlevel 1 exit /b 1
 )
 echo build.cmd: OK - "%OUT%"
 endlocal

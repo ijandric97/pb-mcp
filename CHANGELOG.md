@@ -4,6 +4,10 @@
 
 ### Added
 
+- Local `build.cmd test` / `bash build.sh test` commands that build and run the
+  full acceptance suite against the resulting binary, including output overrides.
+- Live/replay protocol regressions for exact decimal/exponent IDs, nesting
+  boundaries, raw NUL bytes, oversized lines, and recovery on the next request.
 - Git source revisions in CLI, initialization, and `pb_version` reports, with
   a tracked-change marker and a fallback for builds without Git metadata.
 - The `LICENSE` file in both native distribution bundles.
@@ -58,6 +62,15 @@
 
 ### Fixed
 
+- Requests deeper than 128 object/array levels are rejected before the native
+  JSON parser can overflow its stack.
+- Numeric request IDs are normalized with exact decimal arithmetic, preserving
+  signed 64-bit integers written with decimal points or exponents and rejecting
+  fractional or out-of-range values instead of rounding them.
+- Replay files share the bounded byte reader used by live stdin. Raw NUL bytes
+  are rejected before decoding, so they cannot silently discard trailing input.
+- Build-test fixtures ignore inherited output overrides, preventing stub builds
+  from overwriting the real server being tested.
 - Compiler/program stdin uses a separate closed pipe, preventing launched code
   from consuming later MCP requests.
 - Out-of-range JSON integer literals are rejected before dispatch instead of

@@ -8,6 +8,7 @@ EnableExplicit
 
 Declare HandleLine(Raw$)
 Declare SendError(IdValue.i, Code.i, Message$)
+Declare RunStdin(File.i = 0)
 
 CompilerIf #PB_Compiler_OS = #PB_OS_Linux
 ; Raw read(2) for the stdin loop (see RunStdin) + dup/close for the capture
@@ -73,9 +74,7 @@ Procedure RunFile(Path$)
     ConsoleError("pbmcp: cannot open session file: " + Path$)
     End 1
   EndIf
-  While Not Eof(f)
-    HandleLine(ReadString(f, #PB_UTF8))
-  Wend
+  RunStdin(f)
   CloseFile(f)
 EndProcedure
 
@@ -89,13 +88,20 @@ Procedure HandleRawLine(*bytes, numBytes.i)
     numBytes - 1
   Wend
   If numBytes = 0 : ProcedureReturn : EndIf
+  Protected i.i
+  For i = 0 To numBytes - 1
+    If PeekA(*bytes + i) = 0
+      SendError(0, -32600, "NUL bytes are not supported in request lines")
+      ProcedureReturn
+    EndIf
+  Next
   ; #PB_ByteLength is REQUIRED: PeekS' Length counts characters for #PB_UTF8
   ; unless this flag is set - without it, a byte-count silently truncates the
   ; line mid-character and every multibyte line turns into a parse error.
   HandleLine(PeekS(*bytes, numBytes, #PB_UTF8 | #PB_ByteLength))
 EndProcedure
 
-; Live serve mode - The buffer now holds RAW bytes;
+; Live/replay reader - The buffer holds RAW bytes;
 ; UTF-8 decoding happens only on complete LF-framed lines, so a chunk can end
 ; mid-character without harm. Buffer doubles on demand for long lines.
 ;
@@ -106,7 +112,7 @@ EndProcedure
 #STDIN_CHUNK = 65536
 #MAX_FRAME_BYTES = 1048576
 
-Procedure RunStdin()
+Procedure RunStdin(File.i = 0)
   Protected cap.i = #STDIN_CHUNK
   Protected *buf = AllocateMemory(cap)
   If *buf = 0 : End 1 : EndIf
@@ -122,20 +128,23 @@ Procedure RunStdin()
       *buf = ReAllocateMemory(*buf, cap)
       If *buf = 0 : End 1 : EndIf
     EndIf
-    CompilerIf #PB_Compiler_OS = #PB_OS_Windows
-      n = ReadConsoleData(*buf + len, cap - len)
-    CompilerElse
-      n = StdinRead(fd, *buf + len, cap - len)
-      If n < 0
-        ; Transient errors (EINTR - a signal arriving mid-read) retry; a
-        ; persistent error gives up after 64 consecutive failures instead of
-        ; spinning forever. The streak resets on any successful read.
-        errStreak + 1
-        If errStreak > 64 : n = 0 : EndIf
-      Else
-        errStreak = 0
-      EndIf
-    CompilerEndIf
+    If File
+      n = ReadData(File, *buf + len, cap - len)
+      If n < 0 : n = 0 : EndIf
+    Else
+      CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+        n = ReadConsoleData(*buf + len, cap - len)
+      CompilerElse
+        n = StdinRead(fd, *buf + len, cap - len)
+        If n < 0
+          ; Retry transient errors, but stop after persistent read failure.
+          errStreak + 1
+          If errStreak > 64 : n = 0 : EndIf
+        Else
+          errStreak = 0
+        EndIf
+      CompilerEndIf
+    EndIf
     If n > 0
       len + n
       start = 0
@@ -164,7 +173,7 @@ Procedure RunStdin()
   Until n = 0
   If len > 0 : HandleRawLine(*buf, len) : EndIf  ; last line without LF
   CompilerIf #PB_Compiler_OS = #PB_OS_Linux
-    If gStdinFd >= 0                         ; release the captured stdin
+    If File = 0 And gStdinFd >= 0             ; release the captured stdin
       StdinClose(gStdinFd)
       gStdinFd = -1
     EndIf

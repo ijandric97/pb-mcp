@@ -69,6 +69,7 @@ The previous index remains intact if generation fails. Changing installations
 or updating the help automatically invalidates the cache.
 
     pbmcp.exe version          # compiler and docs versions should match
+    build.cmd test            # build, then run the full local acceptance suite
     node test/run_tests.mjs    # acceptance suite, including installed-help checks
     make-dist.cmd             # build and assemble the self-contained dist\ bundle
     build.cmd check           # syntax only; does not regenerate documentation
@@ -83,6 +84,7 @@ for linking; bash):
 
     bash build.sh            # lint + compile to ./pbmcp  (--thread: REQUIRED on Linux)
     bash build.sh check      # --check on the real tree (authoritative syntax gate)
+    bash build.sh test       # build + full local acceptance suite
     bash make-dist.sh        # assemble the self-contained dist/ bundle
 
 Both builds require thread safety (`/THREAD` on Windows, `--thread` on Linux)
@@ -268,9 +270,17 @@ Protocol: MCP over stdio — JSON-RPC 2.0, newline-framed UTF-8,
 JSON integer literals must fit the signed 64-bit range; larger identifiers can
 be sent as strings. Out-of-range integer literals reject the request line with
 error `-32600` and a null ID.
-Each stdin request line is limited to 1 MiB (1,048,576 bytes before the LF).
+Numeric request IDs must have an exact integer value in that range. Decimal
+and exponent forms such as `1.0` and `1e3` are normalized without floating-point
+rounding; fractional and out-of-range IDs receive `-32600` with a null ID.
+Request lines, including replay files, are limited to 1 MiB (1,048,576 bytes before the LF).
 An oversized line receives error `-32600` with a null ID and is discarded
 through its next LF; subsequent requests are processed normally.
+JSON nesting is limited to 128 object/array levels, including the request
+envelope and any batch array. Brackets inside strings do not count.
+Deeper requests and lines containing raw NUL bytes receive `-32600` with a
+null ID; the next request line is processed normally. Escaped NUL characters
+in JSON strings are also rejected.
 Requests may be sent individually or in a batch array. A batch produces one
 response array; notifications receive no response. Invalid request envelopes
 and unknown tools return JSON-RPC errors. Tool execution failures use
@@ -363,14 +373,19 @@ that is invalid or empty reports an error instead of silently switching versions
 
 ## Tests
 
-    node test/run_tests.mjs       # full acceptance suite: framing + multibyte,
-                                  # protocol, docs tools, pb_check, pb_run,
-                                  # metrics, wiring, missing-index UX, scanner
+    build.cmd test            # Windows: build + test the resulting binary locally
+    bash build.sh test        # Linux: build + test the resulting binary locally
+    node test/run_tests.mjs    # full acceptance suite: framing + multibyte,
+                               # protocol, docs tools, pb_check, pb_run,
+                               # metrics, wiring, missing-index UX, scanner
     node --test test/project.test.mjs   # project staging/safety/runtime (focused)
     node --test test/http.test.mjs      # HTTP protocol/security/integration (focused)
 
 Set `PBMCP_EXE` to test a build elsewhere (e.g. `test/out_version/`) — the
 repo-root exe is locked while a live server runs on it.
+The build scripts' `test` mode sets `PBMCP_EXE` to their own output, including
+any `PBMCP_OUT` override, and returns nonzero if the suite fails. All checks
+run locally; no hosted CI or Git hooks are required.
 
 Documentation assertions use `test/fixtures/docs-index.json`, independently of
 the embedded index or user cache; `PUREBASIC_MCP_INDEX` can select another index
