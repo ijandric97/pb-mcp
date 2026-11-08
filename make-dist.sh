@@ -13,6 +13,7 @@
 #                            none exists the binary's embedded placeholder covers.
 #   dist/README.md
 #   dist/INSTALL.md
+#   dist/LICENSE
 #   dist/skills/purebasic/        complete skill (SKILL.md + references/)
 #
 # Builds in a sibling staging directory; the previous dist/ stays intact
@@ -24,15 +25,19 @@ cd "$(dirname "$0")" || exit 1
 STAGE=""
 BACKUP=""
 cleanup() {
+  restore
   if [ -n "$STAGE" ] && [ -d "$STAGE" ]; then rm -rf -- "$STAGE"; fi
 }
 restore() {
-  if [ -n "$BACKUP" ] && [ -e "$BACKUP" ] && [ ! -e dist ]; then
+  if [ -n "$BACKUP" ] && [ -e "$BACKUP" ] && [ ! -e dist ] && [ ! -L dist ]; then
     if ! mv -- "$BACKUP" dist; then echo "make-dist: previous dist remains at $BACKUP"; fi
   fi
 }
-fail() { restore; echo "make-dist: assembly FAILED"; exit 1; }
+fail() { echo "make-dist: assembly FAILED"; exit 1; }
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "make-dist: creating staged dist layout"
 STAGE=$(mktemp -d "$PWD/.dist-stage.XXXXXX") || fail
@@ -49,6 +54,7 @@ fi
 echo "make-dist: copying docs + skill"
 cp README.md "$STAGE/" || fail
 cp INSTALL.md "$STAGE/" || fail
+cp LICENSE "$STAGE/" || fail
 cp src/pbdocs-index.json "$STAGE/index.json" || fail
 echo "make-dist: copying complete skill tree (SKILL.md + references/)"
 cp -R skills/purebasic/. "$STAGE/skills/purebasic/" || fail

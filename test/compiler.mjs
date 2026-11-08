@@ -218,6 +218,25 @@ If FindString(FormatRunResult(@failed, "fixture.pb"), "Compiler timeout after 30
 failed\\hasRun = #True
 failed\\runRes\\spawnFailed = #True
 If FindString(FormatRunResult(@failed, "fixture.pb"), "PROGRAM FAILED TO START") <> 1 : End 10 : EndIf
+Define diagnosticText.s = LSet("", 1024 * 1024, Chr(10)), parseStarted.i = ElapsedMilliseconds()
+NewList parsedErrors.DiagT()
+NewList parsedWarnings.DiagT()
+ParseDiagnostics(diagnosticText, parsedErrors(), parsedWarnings())
+If ListSize(parsedErrors()) Or ListSize(parsedWarnings()) : End 12 : EndIf
+If StripCompilerNoise(diagnosticText) <> "" : End 13 : EndIf
+Define parseMs.i = ElapsedMilliseconds() - parseStarted
+If parseMs > 2000 : End 14 : EndIf
+diagnosticText = ReplaceString(Space(128 * 1024), " ", "x" + Chr(10))
+parseStarted = ElapsedMilliseconds()
+If Len(StripCompilerNoise(diagnosticText)) <> Len(diagnosticText) - 1 : End 18 : EndIf
+If ElapsedMilliseconds() - parseStarted > 2000 : End 19 : EndIf
+diagnosticText = "Error: in included file 'nested.pbi'" + Chr(13) + Chr(10) + "Error: Line 2 - failure." + Chr(10) + "Warning: Line 3 - warning." + Chr(10) + "Warning: tail"
+ParseDiagnostics(diagnosticText, parsedErrors(), parsedWarnings())
+If ListSize(parsedErrors()) <> 1 Or ListSize(parsedWarnings()) <> 2 : End 15 : EndIf
+FirstElement(parsedErrors())
+If parsedErrors()\\line <> 2 Or parsedErrors()\\file <> "nested.pbi" Or parsedErrors()\\message <> "failure" : End 16 : EndIf
+If StripCompilerNoise(" " + Chr(10) + "one" + Chr(13) + Chr(10) + Chr(10) + Chr(10) + "two") <> "one" + Chr(10) + Chr(10) + "two" : End 17 : EndIf
+PrintN("1 MiB diagnostic lines parsed and stripped in " + Str(parseMs) + " ms")
 PrintN("stderr capture bounded")
 CloseConsole()
 `);
@@ -225,4 +244,5 @@ compile(captureSource, captureExe);
 const captured = spawnSync(captureExe, [], { env, encoding: 'utf8', timeout: 15000, windowsHide: true });
 assert.equal(captured.status, 0, `capture probe exit ${captured.status}: ${captured.stdout}${captured.stderr}`);
 assert.match(captured.stdout, /stderr capture bounded/);
+console.log(captured.stdout.trim());
 console.log(`compiler tests passed (includes/resources/diagnostics, compiler failures, metrics paths, args, lint, stderr caps/UTF-8/deadlines); 50,000 lines: ${Math.round(measured.ms)}ms wall, ${reported}ms reported`);

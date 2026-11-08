@@ -2,7 +2,7 @@
 ; console.pb - UTF-8 console output + input loops (stdio transport).
 ;
 ; BOM-less UTF-8 is silently misread as CP-1252 by the PB compilers;
-; build.cmd enforces the BOM via tools/lint_encoding.ps1.
+; build.cmd enforces the BOM via tools/lint_encoding.mjs.
 ; ---------------------------------------------------------------------------
 EnableExplicit
 

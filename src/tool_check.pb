@@ -177,17 +177,27 @@ EndProcedure
 
 ; stripCompilerNoise: drop banner lines, collapse blank runs, trim.
 Procedure.s StripCompilerNoise(Output$)
-  Protected kept$ = "", prevBlank.i = #True, i.i, n.i, line$, t$
-  n = CountString(Output$, Chr(10)) + 1
-  For i = 1 To n
-    line$ = RTrim(Trim(StringField(Output$, i, Chr(10))), Chr(13))
+  ; Reserve one extra LF for an unterminated final line and copy each kept line once.
+  Protected length.i = Len(Output$), kept$ = Space(length + 1), written.i, lineLength.i
+  Protected prevBlank.i = #True, start.i, nextLine.i, line$, t$
+  While start < length
+    nextLine = start
+    While nextLine < length And PeekU(@Output$ + nextLine * SizeOf(Character)) <> 10
+      nextLine + 1
+    Wend
+    line$ = RTrim(Trim(PeekS(@Output$ + start * SizeOf(Character), nextLine - start, #PB_Unicode)), Chr(13))
+    start = nextLine + 1
     t$ = Trim(line$)
     If t$ <> "" And IsBannerLine(t$) : Continue : EndIf
     If t$ = "" And prevBlank : Continue : EndIf
-    kept$ + line$ + Chr(10)
+    lineLength = Len(line$)
+    If lineLength > 0 : CopyMemory(@line$, @kept$ + written * SizeOf(Character), lineLength * SizeOf(Character)) : EndIf
+    written + lineLength
+    PokeU(@kept$ + written * SizeOf(Character), 10)
+    written + 1
     prevBlank = Bool(t$ = "")
-  Next
-  ProcedureReturn TrimAll(kept$)
+  Wend
+  ProcedureReturn TrimAll(Left(kept$, written))
 EndProcedure
 
 ; ---------------------------------------------------------------------------
@@ -244,10 +254,14 @@ Procedure ParseDiagnostics(Output$, List Errors.DiagT(), List Warnings.DiagT())
   If Not gDiagReady : DiagRulesInit() : EndIf
   ClearList(Errors())
   ClearList(Warnings())
-  Protected n.i = CountString(Output$, Chr(10)) + 1
-  Protected i.i, raw$, includedFile$
-  For i = 1 To n
-    raw$ = Trim(RTrim(Trim(StringField(Output$, i, Chr(10))), Chr(13)))
+  Protected start.i, nextLine.i, length.i = Len(Output$), raw$, includedFile$
+  While start < length
+    nextLine = start
+    While nextLine < length And PeekU(@Output$ + nextLine * SizeOf(Character)) <> 10
+      nextLine + 1
+    Wend
+    raw$ = Trim(RTrim(Trim(PeekS(@Output$ + start * SizeOf(Character), nextLine - start, #PB_Unicode)), Chr(13)))
+    start = nextLine + 1
     If raw$ = "" : Continue : EndIf
     If ReMatch(gDiagRe(4), raw$)
       includedFile$ = gReG1
@@ -272,7 +286,7 @@ Procedure ParseDiagnostics(Output$, List Errors.DiagT(), List Warnings.DiagT())
       Warnings()\line = 0
       Warnings()\message = gReG1
     EndIf
-  Next
+  Wend
 EndProcedure
 
 ; ---------------------------------------------------------------------------

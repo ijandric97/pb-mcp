@@ -179,10 +179,15 @@ Failed builds or tests preserve the previous distribution:
                                       embedded placeholder covers when absent)
     dist/README.md
     dist/INSTALL.md                   quickstart for binary consumers
+    dist/LICENSE
     dist/skills/purebasic/            companion agent skill (SKILL.md + references/)
 
-`dist/` is gitignored; regenerate after every release-worthy change. Close any
-client running `dist/pbmcp[.exe]` before replacing it on Windows.
+`dist/` and packaging stages/backups are gitignored; regenerate after every
+release-worthy change. Close clients running `dist/pbmcp[.exe]` on Windows
+to allow cleanup of the previous executable; retained files are reported.
+Catchable interruptions restore the previous bundle on Linux. On Windows,
+rerunning `make-dist.cmd` recovers a retained backup if an interruption left
+`dist/` missing.
 
 ## Companion skill
 
@@ -250,6 +255,9 @@ shape under `"mcpServers"`. On Linux the command is e.g.
     pbmcp.exe scan-batch <manifest.json>           parse command pages in one process
     pbmcp.exe test <file>                          replay a golden .jsonl session (test runner)
     pbmcp.exe http --port 6817 --auth-file <path>  authenticated loopback HTTP (see [HTTP transport](#http-transport))
+
+Source builds include the short Git revision in every version report, with
+`-dirty` for tracked changes. Builds without Git metadata report `unknown`.
 
 Protocol: MCP over stdio — JSON-RPC 2.0, newline-framed UTF-8,
 `2025-03-26`; the optional HTTP mode speaks stateless Streamable HTTP with
@@ -324,6 +332,8 @@ reference. It is not used by the automatic source build:
   file has been written.
   Empty command discovery or coverage fails the refresh and preserves the
   previous mirror or index, including HTTP 200 error pages with no command links.
+  Command-page titles must match their command filenames; HTTP 200 maintenance
+  pages fail the refresh before the previous mirror is replaced.
 - An optional `referenceText` map stores cleaned reference bodies once per file;
   keyword and constant aliases share those bodies. HTML decoration is removed,
   code examples retain line breaks/indentation, and `pb_command` caps the answer
@@ -383,7 +393,7 @@ Set `PUREBASIC_HOME` to the installation to test.
     src/tool_run.pb    pb_run (staged compile/run, timeout, tree-kill)
     src/tools.pb       tool registry, tools/list schemas, docs tool handlers
     src/http.pb        bounded authenticated loopback Streamable HTTP adapter
-    tools/lint_encoding.ps1   build-time encoding gate (Windows)
+    tools/lint_encoding.mjs   build-time encoding gate (Windows, using Node.js)
     tools/lint_encoding.sh    build-time encoding gate (Linux; same BOM rule)
     build.sh / make-dist.sh   Linux build + packaging (build.cmd / make-dist.cmd ports)
     tools/fetch-online-docs.mjs   mirror the official online docs

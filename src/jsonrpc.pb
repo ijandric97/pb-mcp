@@ -21,12 +21,13 @@ Global gHttpCapturedResponse.s = ""
 Global gBatchActive.i = #False
 Global gBatchResponses$ = ""
 
-; serverInfo.version and the version CLI line share ServerVersionFull().
-; The build stamp is the COMPILE date (#PB_Compiler_Date): a PB constant
-; cannot call functions (probe-verified), so a procedure derives it per
-; call - every rebuild stamps itself, no hand-maintained date constant.
+CompilerIf Not Defined(PBMCP_REVISION$, #PB_Constant)
+  #PBMCP_REVISION$ = "unknown"
+CompilerEndIf
+
+; Build scripts inject the revision; direct/compiler-only builds stay usable.
 Procedure.s ServerVersionFull()
-  ProcedureReturn #SERVER_VERSION$ + " (build " + FormatDate("%yyyy-%mm-%dd", #PB_Compiler_Date) + ")"
+  ProcedureReturn #SERVER_VERSION$ + " (build " + FormatDate("%yyyy-%mm-%dd", #PB_Compiler_Date) + "; revision " + #PBMCP_REVISION$ + ")"
 EndProcedure
 ; NO global output cap: truncation happens inside the formatters (docs
 ; search 8000 / command 14000 / check 8000 / run caps) - a global cap here

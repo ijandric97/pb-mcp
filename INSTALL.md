@@ -11,6 +11,7 @@ Windows, `pbmcp` on Linux.
     skills/purebasic/SKILL.md      companion agent skill (recommended)
     README.md                      full documentation
     INSTALL.md                     this file
+    LICENSE                        license text
 
 Verify what you deployed (server, protocol, PureBasic and docs-index
 versions) at any time:
@@ -18,6 +19,8 @@ versions) at any time:
     pbmcp[.exe] version            CLI report, exit 0
 
 or ask the agent to call its `pb_version` tool once connected.
+Source builds also report their Git revision (`-dirty` means tracked changes;
+`unknown` means the build had no Git metadata).
 
 ## 1. Requirements
 

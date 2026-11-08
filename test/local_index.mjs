@@ -13,6 +13,18 @@ const home = join(scratch, 'installation with spaces');
 const docs = join(home, 'Help', 'English');
 mkdirSync(join(docs, 'Reference'), { recursive: true });
 mkdirSync(join(docs, 'MainGuide'));
+const lint = join(scratch, 'encoding');
+mkdirSync(join(lint, 'tools'), { recursive: true });
+mkdirSync(join(lint, 'src'));
+writeFileSync(join(lint, 'tools', 'lint_encoding.mjs'), readFileSync(join(root, 'tools', 'lint_encoding.mjs')));
+writeFileSync(join(lint, 'src', 'good.pb'), '\uFEFFEnableExplicit');
+const lintEncoding = () => spawnSync(process.execPath, [join(lint, 'tools', 'lint_encoding.mjs')],
+  { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+assert.equal(lintEncoding().status, 0);
+writeFileSync(join(lint, 'src', 'bad.pb'), 'EnableExplicit');
+const rejectedEncoding = lintEncoding();
+assert.equal(rejectedEncoding.status, 1);
+assert.match(rejectedEncoding.stderr, /bad\.pb - missing UTF-8 BOM/);
 writeFileSync(join(docs, 'Reference', 'commandindex.html'), 'commands');
 const history = join(docs, 'MainGuide', 'history.html');
 writeFileSync(history, '<b>10th August 2026 : Version 6.41</b>\nVersion 6.40');

@@ -111,9 +111,15 @@ for (const [kind, contents] of [['valid', fixture('embedded')], ['empty', '{"com
   writeFileSync(join(sources, 'pbdocs-index.json'), contents);
   const args = win ? ['/THREAD', '/CONSOLE', join(sources, 'main.pb'), '/EXE', binary]
     : ['--thread', '--console', join(sources, 'main.pb'), '--output', binary];
+  if (kind === 'valid') args.push(win ? '/CONSTANT' : '--constant', 'PBMCP_REVISION$=0123456789ab-dirty');
   const compiled = spawnSync(compiler, args, { env, encoding: 'utf8', timeout: 30000, windowsHide: true });
   verify(compiled.status === 0, `build ${kind}: ${compiled.stdout} ${compiled.stderr} ${compiled.error || ''}`);
   binaries[kind] = binary;
+}
+for (const [kind, revision] of [['valid', '0123456789ab-dirty'], ['empty', 'unknown']]) {
+  const builtVersion = spawnSync(binaries[kind], ['version'], { env, encoding: 'utf8', timeout: 15000, windowsHide: true });
+  verify(builtVersion.status === 0 && builtVersion.stdout.includes('; revision ' + revision + ')'),
+    `build revision ${revision}: ${builtVersion.stdout} ${builtVersion.stderr}`);
 }
 function report(binary, overrides = {}) {
   const responses = rpc(binary, [call(1, 'pb_version', {}), call(2, 'pb_command', { name: 'FixtureCommand' })],

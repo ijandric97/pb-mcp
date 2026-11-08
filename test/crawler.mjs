@@ -35,13 +35,15 @@ const server = createServer((req, res) => {
     res.end('<html>ok</html>');
   } else if (path === '/lib/cmd.html' && mode === 'command-failure') {
     res.writeHead(500).end('broken');
+  } else if (path === '/lib/cmd.html' && mode === 'command-bad-page') {
+    res.end('<html><head><title>Maintenance</title></head><body>Temporarily unavailable</body></html>');
   } else if (path === '/lib/cmd.html') {
     if (raceTarget) {
       mkdirSync(raceTarget);
       writeFileSync(join(raceTarget, 'main.pb'), 'created during crawl');
       raceTarget = undefined;
     }
-    res.end('<html>command</html>');
+    res.end('<html><head><title>cmd</title></head><body>command documentation</body></html>');
   } else {
     res.writeHead(404).end('not found');
   }
@@ -114,7 +116,7 @@ try {
   assert.equal(emptyRefresh.code, 1, emptyRefresh.stdout + emptyRefresh.stderr);
   assert.match(emptyRefresh.stderr, /No command pages found/);
   assert.deepEqual(readFileSync(join(tolerated, 'manifest.json')), beforeEmptyRefresh);
-  assert.equal(readFileSync(join(tolerated, 'lib', 'cmd.html'), 'utf8'), '<html>command</html>');
+  assert.equal(readFileSync(join(tolerated, 'lib', 'cmd.html'), 'utf8'), '<html><head><title>cmd</title></head><body>command documentation</body></html>');
 
   mode = 'missing410';
   const gone410 = join(scratch, 'gone-410');
@@ -165,6 +167,18 @@ try {
   assert.match(commandError.stderr, /lib\/cmd\.html: HTTP 500/);
   assert.equal(readFileSync(join(commandFailure, 'manifest.json'), 'utf8'), previousManifest, 'failed command refresh changed the old manifest');
   assert.equal(readFileSync(join(commandFailure, 'previous.html'), 'utf8'), 'previous mirror', 'failed command refresh changed the old mirror');
+
+  mode = 'command-bad-page';
+  const badCommandPage = join(scratch, 'command-bad-page');
+  mkdirSync(badCommandPage, { recursive: true });
+  writeFileSync(join(badCommandPage, 'manifest.json'), previousManifest);
+  writeFileSync(join(badCommandPage, 'previous.html'), 'previous mirror');
+  const badPage = await crawl(badCommandPage);
+  assert.equal(badPage.code, 1, badPage.stderr);
+  assert.match(badPage.stderr, /FAILED 1 page\(s\):/);
+  assert.match(badPage.stderr, /lib\/cmd\.html: expected command page title/);
+  assert.equal(readFileSync(join(badCommandPage, 'manifest.json'), 'utf8'), previousManifest, 'HTTP 200 error page replaced the old manifest');
+  assert.equal(readFileSync(join(badCommandPage, 'previous.html'), 'utf8'), 'previous mirror', 'HTTP 200 error page replaced the old mirror');
   mode = 'missing';
   for (const failRestore of [false, true]) {
     const target = join(scratch, failRestore ? 'rollback-failure' : 'publish-failure');
@@ -196,7 +210,7 @@ require('node:module').syncBuiltinESMExports();
       assert.equal(readFileSync(join(target, 'previous.html'), 'utf8'), 'previous mirror', 'failed publication did not restore the old mirror');
     }
   }
-  console.log('crawler tests passed (destination protection, 404/410, retries, failed-refresh preservation, stale-page cleanup)');
+  console.log('crawler tests passed (destination protection, 404/410, retries, bad-page rejection, failed-refresh preservation, stale-page cleanup)');
 } finally {
   await new Promise(resolve => server.close(resolve));
   assert.ok(scratchInsideTemp, `refusing recursive cleanup outside tmpdir: ${scratch}`);

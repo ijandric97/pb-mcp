@@ -4,6 +4,9 @@
 
 ### Added
 
+- Git source revisions in CLI, initialization, and `pb_version` reports, with
+  a tracked-change marker and a fallback for builds without Git metadata.
+- The `LICENSE` file in both native distribution bundles.
 - Local release gates: distribution scripts run the full acceptance suite against
   the staged binary before replacing the existing bundle. Failed tests preserve
   the previous distribution.
@@ -34,6 +37,8 @@
 
 ### Changed
 
+- The Windows encoding gate uses the already-required Node.js runtime instead
+  of PowerShell.
 - Documentation guidance now uses `pb_command` directly for known names, reserves
   search for discovery, reuses previous lookups, and checks coherent edit batches.
 - The companion skill uses the project's explicit target or installed compiler
@@ -53,6 +58,12 @@
 
 ### Fixed
 
+- Compiler diagnostics and noise filtering scan and copy output once, avoiding
+  repeated prefix scans and string growth on many short lines.
+- Online command pages with unexpected titles fail before publishing a mirror,
+  preserving working documentation when HTTP 200 responses contain error pages.
+- Bash packaging restores the previous bundle on catchable interruptions;
+  Windows packaging recovers a retained backup on the next invocation.
 - Empty online command discovery and empty coverage now fail before replacing
   a working documentation mirror or index.
 - Compiler/program stderr uses bounded native byte-pipe reads with a 4 MiB

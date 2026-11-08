@@ -11,6 +11,7 @@
 
 # Distribution bundle (regenerate with make-dist.cmd)
 /dist/
+/.dist-stage*/
 
 # Generated test output and scratch data
 /test/out/

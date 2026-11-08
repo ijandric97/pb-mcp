@@ -83,6 +83,15 @@ async function fetchPage(url) {
   }
 }
 
+function validateCommandPage(body, rel) {
+  const title = body.toString('latin1').match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i)?.[1]
+    .replace(/<[^>]*>/g, '').trim();
+  const expected = basename(rel).replace(/\.html$/i, '');
+  if (!title || title.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error(`${rel}: expected command page title "${expected}"`);
+  }
+}
+
 async function pool(items, worker) {
   const queue = [...items];
   const runners = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
@@ -155,6 +164,7 @@ try {
   await pool(cmdPages, async rel => {
     try {
       const buf = await fetchPage(base + rel);
+      validateCommandPage(buf, rel);
       const file = join(stage, ...rel.split('/'));
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, buf);

@@ -35,6 +35,9 @@ function setPreviousDist() {
   mkdirSync(dist, { recursive: true });
   writeFileSync(join(dist, 'previous.txt'), 'old bundle');
   writeFileSync(join(dist, 'old-extra.txt'), 'preserve me');
+  writeFileSync(join(dist, 'pbmcp.exe'), 'previous binary');
+  writeFileSync(join(dist, 'index.json'), 'previous index');
+  writeFileSync(join(dist, 'README.md'), 'previous readme');
   return snapshot(dist);
 }
 
@@ -53,6 +56,7 @@ try {
   mkdirSync(join(scratch, 'skills', 'purebasic', 'references'), { recursive: true });
   writeFileSync(join(scratch, 'README.md'), 'readme');
   writeFileSync(join(scratch, 'INSTALL.md'), 'install');
+  writeFileSync(join(scratch, 'LICENSE'), 'license');
   writeFileSync(join(scratch, 'src', 'pbdocs-index.json'), '{"commands":[]}');
   writeFileSync(join(scratch, 'skills', 'purebasic', 'SKILL.md'), 'skill');
   writeFileSync(join(scratch, 'skills', 'purebasic', 'references', 'guide.md'), 'guide');
@@ -82,14 +86,16 @@ try {
   assert.deepEqual(snapshot(dist), previous, 'build failure changed the previous bundle');
   assertNoStaging();
 
-  previous = setPreviousDist();
-  const install = readFileSync(join(scratch, 'INSTALL.md'));
-  rmSync(join(scratch, 'INSTALL.md'));
-  result = run();
-  writeFileSync(join(scratch, 'INSTALL.md'), install);
-  assert.notEqual(result.status, 0, 'copy failure unexpectedly succeeded');
-  assert.deepEqual(snapshot(dist), previous, 'copy failure changed the previous bundle');
-  assertNoStaging();
+  for (const name of ['INSTALL.md', 'LICENSE']) {
+    previous = setPreviousDist();
+    const file = join(scratch, name), contents = readFileSync(file);
+    rmSync(file);
+    result = run();
+    writeFileSync(file, contents);
+    assert.notEqual(result.status, 0, `${name} copy failure unexpectedly succeeded`);
+    assert.deepEqual(snapshot(dist), previous, 'copy failure changed the previous bundle');
+    assertNoStaging();
+  }
 
   previous = setPreviousDist();
   result = run({ FAIL_SMOKE: '1' });
@@ -108,6 +114,7 @@ try {
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(existsSync(join(dist, 'previous.txt')), false, 'successful publish kept stale files');
   assert.equal(readFileSync(join(dist, 'README.md'), 'utf8'), 'readme');
+  assert.equal(readFileSync(join(dist, 'LICENSE'), 'utf8'), 'license');
   assert.equal(readFileSync(join(dist, 'index.json'), 'utf8'), '{"commands":[]}');
   assert.equal(readFileSync(join(dist, 'skills', 'purebasic', 'references', 'guide.md'), 'utf8'), 'guide');
   assertNoStaging();
@@ -156,7 +163,47 @@ try {
   }
   writeFileSync(script, originalScript);
 
+  if (!win) {
+    previous = setPreviousDist();
+    writeFileSync(join(scratch, 'signal-count'), '0\n');
+    const signalProbe = join(scratch, 'signal-probe.sh');
+    writeFileSync(signalProbe, [
+      '#!/bin/bash',
+      'read -r count < "$PWD/signal-count"',
+      'count=$((count + 1))',
+      'echo "$count" > "$PWD/signal-count"',
+      'if [ "$count" = 2 ]; then kill -TERM "$PPID"; exit 0; fi',
+      'exec mv -- "$@"',
+      '',
+    ].join('\n'));
+    writeFileSync(script, originalScript.replace(/\bmv -- /g, 'bash "$PWD/signal-probe.sh" '));
+    result = run();
+    assert.equal(result.status, 143, `TERM status: ${result.status}; ${result.stderr || result.stdout}`);
+    assert.deepEqual(snapshot(dist), previous, 'TERM after backup rename failed to restore the previous bundle');
+    assertNoStaging();
+    writeFileSync(script, originalScript);
+  }
+
   if (win) {
+    // Recover the previous bundle left by a hard interruption after its rename.
+    const partial = join(scratch, '.dist-stage-partial.old');
+    mkdirSync(partial);
+    writeFileSync(join(partial, 'pbmcp.exe'), 'locked-image fixture');
+    rmSync(dist, { recursive: true });
+    result = run({ FAIL_BUILD: '1' });
+    assert.notEqual(result.status, 0);
+    assert.equal(existsSync(dist), false, 'partial backup was restored as a complete bundle');
+    assert.ok(existsSync(join(partial, 'pbmcp.exe')), 'partial backup was deleted');
+    rmSync(partial, { recursive: true });
+
+    previous = setPreviousDist();
+    const recovery = join(scratch, '.dist-stage-interrupted.old');
+    renameSync(dist, recovery);
+    result = run({ FAIL_BUILD: '1' });
+    assert.notEqual(result.status, 0, 'recovery fixture build unexpectedly succeeded');
+    assert.deepEqual(snapshot(dist), previous, 'next run did not recover the previous bundle');
+    assertNoStaging();
+
     // A running executable can prevent Windows from renaming the old dist directory.
     setPreviousDist();
     copyFileSync(process.execPath, join(dist, 'pbmcp.exe'));
@@ -168,7 +215,12 @@ try {
       await new Promise((resolve, reject) => { old.once('spawn', resolve); old.once('error', reject); });
       result = run();
       if (result.status !== 0) assert.deepEqual(snapshot(dist), previous, 'locked-exe failure damaged the old bundle');
-      else assert.ok(existsSync(join(dist, 'README.md')), 'successful locked-exe publish is incomplete');
+      else {
+        assert.ok(existsSync(join(dist, 'README.md')), 'successful locked-exe publish is incomplete');
+        for (const name of readdirSync(scratch).filter(name => name.startsWith('.dist-stage-') && name.endsWith('.old'))) {
+          assert.ok(result.stdout.includes(join(scratch, name)), 'retained locked executable was not reported');
+        }
+      }
     } finally {
       old.kill();
       await closed;

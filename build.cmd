@@ -25,7 +25,7 @@ if not defined PBC (
 )
 
 echo build.cmd: encoding lint - UTF-8 BOM required on all src/*.pb
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\lint_encoding.ps1"
+node "%~dp0tools\lint_encoding.mjs"
 if errorlevel 1 (
     echo build.cmd: lint FAILED - fix source encoding before compiling
     exit /b 1
@@ -43,13 +43,19 @@ echo build.cmd: /CHECK on "%SRC%"
 exit /b %errorlevel%
 
 :compile
+set "REVISION=unknown"
+for /f "delims=" %%G in ('git -C "%~dp0." rev-parse --short HEAD 2^>nul') do set "REVISION=%%G"
+if not "%REVISION%"=="unknown" (
+    git -C "%~dp0." diff --quiet HEAD -- 2>nul
+    if errorlevel 1 set "REVISION=%REVISION%-dirty"
+)
 node "%~dp0tools\build-local-index.mjs" --compiler "%PBC%" --out "%~dp0src\pbdocs-index.json"
 if errorlevel 1 (
     echo build.cmd: local help indexing FAILED - Node.js and matching installed help are required
     exit /b 1
 )
 echo build.cmd: compiling "%SRC%"
-"%PBC%" /THREAD /CONSOLE "%SRC%" /EXE "%OUT%"
+"%PBC%" /THREAD /CONSOLE "%SRC%" /EXE "%OUT%" /CONSTANT PBMCP_REVISION$=%REVISION%
 if errorlevel 1 (
     echo build.cmd: compile FAILED
     exit /b 1

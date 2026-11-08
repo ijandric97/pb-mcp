@@ -14,12 +14,19 @@ rem                           index-*.json; plain index.json is ignored). When
 rem                           none exists the binary's embedded placeholder covers.
 rem   dist\README.md
 rem   dist\INSTALL.md
+rem   dist\LICENSE
 rem   dist\skills\purebasic\         complete skill (SKILL.md + references\)
 rem
 rem Builds in a sibling staging directory; the previous dist\ stays intact
 rem until the new bundle builds, copies, and passes its acceptance suite.
 rem ---------------------------------------------------------------------------
 cd /d "%~dp0" || exit /b 1
+
+rem Recover an old bundle left by an uncatchable interruption after its rename.
+if not exist "%~dp0dist" for /d %%B in ("%~dp0.dist-stage-*.old") do if not exist "%~dp0dist" if exist "%%B\pbmcp.exe" if exist "%%B\index.json" if exist "%%B\README.md" (
+    move "%%B" "%~dp0dist" >nul || echo make-dist: previous dist remains at "%%B"
+    if not exist "%%B" rmdir /s /q "%%~dpB%%~nB"
+)
 
 set "STAGE_OWNED="
 set "STAGE="
@@ -48,6 +55,7 @@ if errorlevel 1 (
 echo make-dist: copying docs + skill
 copy /y "README.md"                 "%STAGE%\" >nul || goto :fail
 copy /y "INSTALL.md"                "%STAGE%\" >nul || goto :fail
+copy /y "LICENSE"                    "%STAGE%\" >nul || goto :fail
 copy /y "src\pbdocs-index.json" "%STAGE%\index.json" >nul || goto :fail
 echo make-dist: copying complete skill tree (SKILL.md + references\)
 xcopy /e /i /y "skills\purebasic" "%STAGE%\skills\purebasic\" >nul || goto :fail
@@ -74,7 +82,10 @@ if errorlevel 1 (
     goto :fail
 )
 set "STAGE_OWNED="
-if exist "%BACKUP%" rmdir /s /q "%BACKUP%"
+if exist "%BACKUP%" (
+    rmdir /s /q "%BACKUP%" 2>nul
+    if exist "%BACKUP%" echo make-dist: previous files remain at "%BACKUP%"
+)
 
 echo make-dist: OK
 dir /b "dist" "dist\skills\purebasic"

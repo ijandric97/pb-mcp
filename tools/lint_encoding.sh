@@ -1,6 +1,6 @@
 #!/bin/bash
 # lint_encoding.sh - enforce the project source-encoding rule (Linux port
-# of lint_encoding.ps1 - KEEP THE TWO IN SYNC; same rule, same messages).
+# of lint_encoding.mjs - KEEP THE TWO IN SYNC; same rule, same messages).
 #
 # The plan offered: ASCII-only OR UTF-8 with BOM. The user elected the
 # BOM branch. Evidence (frozen): BOM-less UTF-8 sources are silently misread
