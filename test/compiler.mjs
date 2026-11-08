@@ -134,6 +134,15 @@ function compile(file, output) {
   assert.equal(result.status, 0, result.stdout + result.stderr);
 }
 const fakeHome = join(scratch, 'fake-home');
+const invalidHome = join(scratch, 'invalid-home');
+const invalidCompiler = join(invalidHome, win ? 'Compilers' : 'compilers', 'pbcompiler' + suffix);
+mkdirSync(dirname(invalidCompiler), { recursive: true });
+writeFileSync(invalidCompiler, 'not an executable\n');
+// An empty PATH also makes the Linux setsid worker fail to start.
+const launchFailure = invoke('pb_check', { file: hello }, { PUREBASIC_HOME: invalidHome, PATH: '' });
+assert.equal(launchFailure.result.isError, true);
+assert.match(text(launchFailure), /Compiler failed to start:/);
+assert.ok(text(launchFailure).includes(invalidCompiler), text(launchFailure));
 mkdirSync(join(fakeHome, win ? 'Compilers' : 'compilers'), { recursive: true });
 const fakeCompilerSource = join(scratch, 'fake-compiler.pb');
 writeFileSync(fakeCompilerSource, '\uFEFFEnableExplicit\nIf OpenConsole()\n' +

@@ -45,6 +45,8 @@
 
 ### Changed
 
+- Documentation loads lazily by default. `PBMCP_PRELOAD=1` now loads the index
+  synchronously before serving requests instead of using a background thread.
 - The Windows encoding gate uses the already-required Node.js runtime instead
   of PowerShell.
 - Documentation guidance now uses `pb_command` directly for known names, reserves
@@ -66,6 +68,13 @@
 
 ### Fixed
 
+- Removed concurrent documentation loading, which could cause intermittent
+  Windows access violations when short MCP sessions exited. Regressions cover
+  1,200 startup/shutdown sessions with default, disabled, and eager loading.
+- `pb_check` reports compiler launch failures with the compiler path instead
+  of returning only `ERRORS (0):`.
+- Unknown argument names are rejected for all tools, matching their
+  `additionalProperties: false` schemas.
 - Metrics appends serialize across clients and retry brief contention without
   changing the record format or making logging failures fatal.
 - Single-page scans infer library and relative-file metadata when optional CLI

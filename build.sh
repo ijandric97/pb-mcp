@@ -8,8 +8,7 @@
 #                           /SWITCH switches do not exist here)
 #         build.sh test     build + run the acceptance suite
 #
-# Both builds require thread safety: documentation preload uses the runtime
-# concurrently with request handling (--thread here, /THREAD on Windows).
+# Both builds enable the thread-safe runtime (--thread here, /THREAD on Windows).
 #
 # Compiler discovery mirrors the server's own ConfigInit() Linux chain:
 # PUREBASIC_HOME > ~/purebasic > /opt/purebasic > /usr/local/purebasic >
@@ -64,7 +63,7 @@ fi
 REVISION=$(git rev-parse --short HEAD 2>/dev/null) || REVISION=unknown
 if [ "$REVISION" != unknown ] && ! git diff --quiet HEAD --; then REVISION="$REVISION-dirty"; fi
 
-echo "build.sh: compiling \"$SRC\" (--thread: required on Linux, see header)"
+echo "build.sh: compiling \"$SRC\""
 "$PBC" --thread --console "$SRC" --output "$OUT" --constant "PBMCP_REVISION\$=$REVISION"
 RC=$?
 if [ $RC -ne 0 ] || [ ! -f "$OUT" ]; then

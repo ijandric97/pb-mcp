@@ -1521,7 +1521,9 @@ Procedure RunCheck(CompilerExe$, AbsFile$, ProjectRoot$, *c.CheckResT)
   *c\timedOut = proc\timedOut
   *c\ok = Bool(proc\spawnFailed = #False And proc\exitCode = 0 And proc\timedOut = #False And ListSize(*c\errors()) = 0)
 
-  If *c\ok = #False And ListSize(*c\errors()) = 0 And proc\spawnFailed = #False
+  If proc\spawnFailed
+    *c\rawTail = "Compiler failed to start: " + CompilerExe$
+  ElseIf *c\ok = #False And ListSize(*c\errors()) = 0
     Protected combined$ = proc\stdout
     If TrimAll(proc\stderr) <> "" : combined$ + Chr(10) + proc\stderr : EndIf
     Protected stripped$ = StripCompilerNoise(combined$)

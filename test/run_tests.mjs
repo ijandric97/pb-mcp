@@ -99,7 +99,7 @@ const pinnedIndex = process.env.PUREBASIC_MCP_INDEX || join(FIX, "docs-index.jso
 // back empty). Windows discovery uses absolute-path candidates and never
 // noticed the bug.
 function pinEnv(extra = {}) {
-  return { ...process.env, PUREBASIC_MCP_NO_METRICS: "1", PBMCP_DOCS_TIMING: "0", PBMCP_PRELOAD: "1", PUREBASIC_MCP_INDEX: pinnedIndex, ...extra };
+  return { ...process.env, PUREBASIC_MCP_NO_METRICS: "1", PBMCP_DOCS_TIMING: "0", PBMCP_PRELOAD: "0", PUREBASIC_MCP_INDEX: pinnedIndex, ...extra };
 }
 
 // ---------------------------------------------------------------------------

@@ -74,23 +74,23 @@ or updating the help automatically invalidates the cache.
     make-dist.cmd             # build and assemble the self-contained dist\ bundle
     build.cmd check           # syntax only; does not regenerate documentation
 
-(`pb_check` preserves relative includes. Use `build.cmd check` for this server's
-required thread-safe compiler setting, which the MCP interface does not expose.)
+(`pb_check` preserves relative includes. `build.cmd check` also uses the build
+scripts' thread-safe compiler setting.)
 
 ### Linux
 
 The same tree builds natively on Linux (PureBasic 6.x for Linux x64 + gcc
 for linking; bash):
 
-    bash build.sh            # lint + compile to ./pbmcp  (--thread: REQUIRED on Linux)
+    bash build.sh            # lint + compile to ./pbmcp
     bash build.sh check      # --check on the real tree (authoritative syntax gate)
     bash build.sh test       # build + full local acceptance suite
     bash make-dist.sh        # assemble the self-contained dist/ bundle
 
-Both builds require thread safety (`/THREAD` on Windows, `--thread` on Linux)
-because documentation preload runs concurrently with request handling. The
-entry point rejects builds without it. Compiler discovery matches the table
-above; `PBMCP_OUT` overrides the output path on both OSes.
+Both build scripts enable the thread-safe runtime (`/THREAD` on Windows,
+`--thread` on Linux). Documentation loading and request handling run on the
+main thread. Compiler discovery matches the table above; `PBMCP_OUT` overrides
+the output path on both OSes.
 
 ## Project staging
 
@@ -284,7 +284,8 @@ in JSON strings are also rejected.
 Requests may be sent individually or in a batch array. A batch produces one
 response array; notifications receive no response. Invalid request envelopes
 and unknown tools return JSON-RPC errors. Tool execution failures use
-`result.isError`.
+`result.isError`. Unknown tool argument names are rejected, matching the
+advertised input schemas.
 
 The batch scanner takes a UTF-8 JSON array of objects with non-empty `path`,
 `library`, and `file` strings. It emits one command JSON line per entry, in input
@@ -300,7 +301,7 @@ available for diagnostics and existing scripts.
 | `PUREBASIC_MCP_INDEX`        | Pin an explicit docs index file (overrides exe-dir/embedded discovery)                                     |
 | `PUREBASIC_MCP_METRICS`      | Redirect the JSONL metrics file                                                                            |
 | `PUREBASIC_MCP_NO_METRICS=1` | Disable metrics writes entirely                                                                            |
-| `PBMCP_PRELOAD`              | Serve-mode background docs-index preload. Default: on in thread-safe builds (`--thread` Linux), **off** on the non-thread-safe Windows build (lazy first-docs-call load; the overlap corrupts the heap). `0` forces it off everywhere; `1` force-enables it (known hazard on the Windows non-TS build) |
+| `PBMCP_PRELOAD=1`            | Load the docs index synchronously before serving requests; default/`0` loads it on the first docs call      |
 
 The metrics file defaults to `<cache>/purebasic-mcp/metrics.jsonl`, where
 `<cache>` is `%LOCALAPPDATA%` on Windows and `${XDG_CACHE_HOME:-~/.cache}`

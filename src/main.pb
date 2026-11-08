@@ -25,10 +25,6 @@
 ; ---------------------------------------------------------------------------
 EnableExplicit
 
-CompilerIf #PB_Compiler_Thread = 0
-  CompilerError "Documentation preload requires a thread-safe build (/THREAD or --thread)."
-CompilerEndIf
-
 XIncludeFile "console.pb"   ; WriteLine / RunFile / RunStdin (declares HandleLine)
 XIncludeFile "jsonrpc.pb"   ; HandleLine + response builders (declares tool hooks)
 XIncludeFile "config.pb"    ; PB home discovery, /VERSION detect, capability flags, ResolvePath
@@ -179,10 +175,7 @@ ElseIf arg$ = "http"
 ElseIf arg$ <> ""
   RunFile(arg$)
 Else
-  DocsPreloadStart()   ; background docs-index preload (serve mode only;
-                       ; no-op unless enabled - PBMCP_PRELOAD=0 kills it)
+  If GetEnvironmentVariable("PBMCP_PRELOAD") = "1" : DocsIndexEnsure() : EndIf
   RunStdin()
-  DocsPreloadStop()    ; join the preload worker before teardown (0xC0000005
-                       ; exit race - see docs_index.pb)
 EndIf
 CloseConsole()

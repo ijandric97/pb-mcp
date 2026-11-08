@@ -400,97 +400,8 @@ Procedure DocsIndexInit()
   EndIf
 EndProcedure
 
-; ---------------------------------------------------------------------------
-; Background-thread index preload.
-;
-; Goal: the first docs call in a fresh serve process lands warm (~1 ms)
-; instead of paying the ~207 ms LoadJSON, by overlapping the load with the
-; client's handshake/think time. Synchronization is WaitThread() only: the
-; worker writes every index global (gIndex*, gByName(), the records)
-; strictly before it ends, and no thread reads them until DocsIndexEnsure()'
-; s WaitThread returns - no mutex. PBMCP_PRELOAD=0 restores today's lazy
-; path byte for byte (runtime kill-switch).
-;
-; DEFAULT depends on the runtime, not the OS: overlapping the worker's PB
-; runtime calls (LoadJSON's ~215 ms parse, map inserts, DocsRecsBuild()'s
-; ReDim + ~5800 LCase allocations) with main-thread runtime use in the
-; request loop is only legal under a thread-safe runtime. The Windows build
-; (build.cmd) deliberately compiles WITHOUT /THREAD, and there the overlap
-; corrupted the heap: the process died mid-session with 0xC0000005 /
-; 0xC0000354 in ~8-15% of docs-call sessions - reproduced 2/24 piped
-; sessions, PBMCP_PRELOAD=0 24/24 clean (2026-11-06). A non-TS build
-; therefore defaults the preload OFF (lazy first-docs-call load, the
-; already-tested path - the WaitThread join itself was never the hazard;
-; the concurrent parse window starting at CreateThread was, and no race-
-; free worker restructure keeps a useful preload). A /THREAD build (Linux
-; --thread, REQUIRED there) keeps the warm preload default.
-;
-; Never-worse rule: a docs call arriving before the load finishes blocks on
-; the same worker, then DocsIndexInit() no-ops via gIndexReady - exactly the
-; lazy path's latency. DocsPreloadStart() is serve-mode only (main.pb, after
-; OpenConsole()); test/index/scan modes keep lazy init. Output-preserving:
-; preload changes WHEN DocsIndexInit() runs, not what it emits (under
-; PBMCP_DOCS_TIMING=1 the one [timing] index stderr line moves to startup;
-; stdout is never touched by the worker).
-; ---------------------------------------------------------------------------
-Global gPreloadOn.i = -1         ; -1 = unprobed; else 0 (off) / 1 (on)
-Global gPreloadThread.i = 0      ; CreateThread handle while running
-
-; Probe PBMCP_PRELOAD exactly once:
-;   "0"    -> off on every build (runtime kill-switch, unchanged)
-;   "1"    -> on on every build (explicit opt-in; known heap-corruption
-;             hazard on a non-TS runtime - see the section comment above)
-;   absent -> on only under a thread-safe runtime (#PB_Compiler_Thread);
-;             a non-TS build takes the lazy path by default.
-Procedure.i DocsPreloadOn()
-  If gPreloadOn = -1
-    CompilerIf #PB_Compiler_Thread
-      gPreloadOn = Bool(GetEnvironmentVariable("PBMCP_PRELOAD") <> "0")
-    CompilerElse
-      gPreloadOn = Bool(GetEnvironmentVariable("PBMCP_PRELOAD") = "1")
-    CompilerEndIf
-  EndIf
-  ProcedureReturn gPreloadOn
-EndProcedure
-
-; Worker body: run the one-shot lazy init in the background; that is all.
-; Never writes stdout. Unused parameter is the CreateThread contract
-; ("must take one parameter and cannot return anything").
-Procedure DocsPreloadThread(P.i)
-  DocsIndexInit()
-EndProcedure
-
-; Serve entry hook: start the worker once. A failed CreateThread simply
-; leaves gPreloadThread at 0 -> DocsIndexEnsure() stays on the lazy path.
-Procedure DocsPreloadStart()
-  If DocsPreloadOn() = 0 : ProcedureReturn : EndIf
-  gPreloadThread = CreateThread(@DocsPreloadThread(), 0)
-EndProcedure
-
-; Shutdown hook (0.3.0): wait for the one-shot worker before process
-; teardown. Without this, a serve session that ends before ANY docs call
-; (the common test-runner shape, and short-lived clients) tears the process
-; down mid-DocsIndexInit and dies with 0xC0000005 - reproduced 35/40 quick
-; sessions; DocsIndexEnsure() only waits when a docs tool was actually
-; called, so the wait must also live on the exit path. Bounded: the worker
-; is one LoadJSON (~200 ms) plus the record build. Same idempotent
-; wait-and-zero as DocsIndexEnsure().
-Procedure DocsPreloadStop()
-  If gPreloadThread
-    WaitThread(gPreloadThread)
-    gPreloadThread = 0
-  EndIf
-EndProcedure
-
-; Serve-path gate for every docs entry point: block until the preload
-; worker is done (immediate once it finished or was never started), then
-; run the idempotent init (no-op via gIndexReady when the worker already
-; did the work - identical outcome to today's direct DocsIndexInit()).
+; Keep index parsing and request handling on one thread to avoid shutdown races.
 Procedure DocsIndexEnsure()
-  If gPreloadThread
-    WaitThread(gPreloadThread)
-    gPreloadThread = 0
-  EndIf
   DocsIndexInit()
 EndProcedure
 
@@ -751,11 +662,8 @@ Procedure.i DocsFindReference(Name$)
   ProcedureReturn 0
 EndProcedure
 
-; DP scratch reused across calls (same single-writer discipline as
-; gCmdRecs: the request path runs strictly after DocsIndexEnsure()'s
-; WaitThread, so nothing can touch these concurrently). Procedure-local
-; Dim would allocate + zero three arrays per candidate - the dominant
-; churn left after the Mid$ removal. Grown on demand; never shrinks.
+; Reuse scratch on the single request thread instead of allocating three
+; arrays per candidate. Grown on demand; never shrinks.
 Global Dim gLevPrev.i(0)
 Global Dim gLevCurr.i(0)
 Global Dim gLevBc.i(0)

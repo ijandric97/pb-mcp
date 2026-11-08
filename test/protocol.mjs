@@ -138,6 +138,30 @@ for (const fileMode of [false, true]) {
 assert.equal(session([request(1, 'tools/call', { name: 'pb_version' })])[0].result.isError, false);
 assert.equal(session([request(1, 'tools/call', { name: 'missing' })])[0].error.code, -32602);
 
+const toolSchemas = session([request(1, 'tools/list')])[0].result.tools;
+const validArgs = {
+  pb_docs_search: { query: 'window', library: 'Window', limit: 2 },
+  pb_command: { name: 'OpenWindow' },
+  pb_check: { file: join(root, 'test', 'fixtures', 'hello.pb') },
+  pb_run: { file: join(root, 'test', 'fixtures', 'hello.pb'), args: [], timeoutMs: 1000 },
+  pb_version: {},
+};
+for (const tool of toolSchemas) {
+  assert.equal(tool.inputSchema.additionalProperties, false);
+  assert.deepEqual(Object.keys(validArgs[tool.name]).sort(), Object.keys(tool.inputSchema.properties).sort());
+  for (const key of ['unexpected', 'libary', 'query|library', 'file|args', '', 'File', '__proto__']) {
+    const [response, next] = session([
+      request(1, 'tools/call', { name: tool.name, arguments: { ...validArgs[tool.name], [key]: true } }),
+      request('after-unknown-argument'),
+    ]);
+    assert.equal(response.result?.isError, true, JSON.stringify(response));
+    assert.ok(response.result.content[0].text.includes(`Invalid arguments for tool ${tool.name}: Unknown argument at ${key}`));
+    assert.deepEqual(next, { jsonrpc: '2.0', id: 'after-unknown-argument', result: {} });
+  }
+}
+assert.equal(session([request(1, 'tools/call', { name: 'missing', arguments: { unexpected: true } })])[0].error.message,
+  'Tool missing not found');
+
 const frameLimit = 1024 * 1024;
 const ping = JSON.stringify(request('boundary'));
 const padded = bytes => ping + ' '.repeat(bytes - Buffer.byteLength(ping));
@@ -187,4 +211,4 @@ for (const fileMode of [false, true]) {
     assert.equal(rawSession(invalid, fileMode)[0].error.code, -32600, 'unterminated NUL frame accepted');
   }
 }
-console.log('protocol tests passed (envelopes/calls, exact numeric IDs, depth/NUL/frame limits and recovery, batch framing, notifications, execution hints, unknown tools)');
+console.log('protocol tests passed (envelopes/calls, exact numeric IDs, depth/NUL/frame limits and recovery, batch framing, notifications, execution hints, unknown tools/arguments)');

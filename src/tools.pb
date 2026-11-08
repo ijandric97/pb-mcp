@@ -335,8 +335,7 @@ EndProcedure
 ; ---------------------------------------------------------------------------
 ; pb_version (0.3.0) - server / protocol / compiler / docs-index versions.
 ; PB-only tool (added in 0.3.0, on top of the four core tools).
-; Arguments are ignored (schema declares no properties); a version report
-; must answer even when the compiler or the docs index are missing.
+; A version report must answer even when the compiler or docs index are missing.
 ; ---------------------------------------------------------------------------
 Procedure ToolVersion(IdValue.i, Args.i)
   DocsIndexEnsure()
@@ -458,6 +457,32 @@ Procedure ToolDispatch(IdValue.i, Params.i)
     SendError(IdValue, -32602, "tools/call arguments must be an object")
     ProcedureReturn
   EndIf
+  Protected allowed$, key$, k.i, known.i
+  Select name$
+    Case "pb_docs_search" : allowed$ = "query|library|limit"
+    Case "pb_command"     : allowed$ = "name"
+    Case "pb_check"       : allowed$ = "file"
+    Case "pb_run"         : allowed$ = "file|args|timeoutMs"
+    Case "pb_version"     : allowed$ = ""
+    Default
+      SendError(IdValue, -32602, "Tool " + name$ + " not found")
+      ProcedureReturn
+  EndSelect
+  If args And ExamineJSONMembers(args)
+    While NextJSONMember(args)
+      key$ = JSONMemberKey(args)
+      known = #False
+      If allowed$ <> ""
+        For k = 1 To CountString(allowed$, "|") + 1
+          If key$ = StringField(allowed$, k, "|") : known = #True : Break : EndIf
+        Next
+      EndIf
+      If Not known
+        SendInvalidParams(IdValue, name$, "Unknown argument at " + key$)
+        ProcedureReturn
+      EndIf
+    Wend
+  EndIf
   Select name$
     Case "pb_docs_search"
       ToolDocsSearch(IdValue, args)
@@ -469,7 +494,5 @@ Procedure ToolDispatch(IdValue.i, Params.i)
       ToolRun(IdValue, args)
     Case "pb_version"
       ToolVersion(IdValue, args)
-    Default
-      SendError(IdValue, -32602, "Tool " + name$ + " not found")
   EndSelect
 EndProcedure

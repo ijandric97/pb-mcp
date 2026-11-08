@@ -53,7 +53,25 @@ for (const value of [null, 42, []]) {
   verify(response.result?.isError === true && text(response).includes('schema validation'), 'non-object index root accepted');
 }
 
-// Mix main-thread compiler/config work with preload to reproduce the old race.
+// Short sessions used to race background index loading during process teardown.
+for (const preload of [undefined, '0', '1']) {
+  const startupEnv = { ...env, PUREBASIC_MCP_INDEX: join(root, 'test', 'fixtures', 'docs-index.json'),
+    PBMCP_DOCS_TIMING: '1' };
+  if (preload === undefined) delete startupEnv.PBMCP_PRELOAD;
+  else startupEnv.PBMCP_PRELOAD = preload;
+  for (let i = 0; i < 400; i++) {
+    const ping = { jsonrpc: '2.0', id: i, method: 'ping' };
+    const result = spawnSync(exe, [], { input: i % 2 ? JSON.stringify(ping) + '\n' : '', cwd: root,
+      env: startupEnv, encoding: 'utf8', timeout: 5000, windowsHide: true });
+    verify(result.status === 0, `startup ${preload ?? 'default'}/${i}: exit ${result.status}: ${result.stderr || result.error || ''}`);
+    if (i % 2) assert.deepEqual(JSON.parse(result.stdout), { jsonrpc: '2.0', id: i, result: {} });
+    else verify(result.stdout === '', `startup ${preload ?? 'default'}/${i}: unexpected stdout`);
+    verify(preload === '1' ? result.stderr.includes('[timing] index path=') : result.stderr === '',
+      `startup ${preload ?? 'default'}/${i}: unexpected index loading: ${result.stderr}`);
+  }
+}
+
+// Compiler/config work and documentation requests still work with eager loading.
 const replay = [
   { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'regression-test', version: '0' } } },
   { jsonrpc: '2.0', id: 2, method: 'tools/list' },
@@ -157,9 +175,4 @@ const emptyCache = win ? { LOCALAPPDATA: join(scratch, 'no-cache') } : { XDG_CAC
 verify(text(report(binaries.empty, emptyCache).docs).startsWith('Docs index has no commands'),
   'empty embedded index without cache lost its missing-index hint');
 
-// Prevent an alternative build command from reintroducing the unsafe runtime.
-const rejected = spawnSync(compiler, win ? ['/CHECK', join(sources, 'main.pb')] : ['--check', join(sources, 'main.pb')],
-  { env, encoding: 'utf8', timeout: 15000, windowsHide: true });
-verify(rejected.status !== 0 && (rejected.stdout + rejected.stderr).includes('thread-safe build'),
-  'a build without thread safety was accepted');
-console.log(`regressions: ${checks} checks passed (preload, paths, index precedence/fallback, thread-safety guard)`);
+console.log(`regressions: ${checks} checks passed (1,200 lazy/eager startup and shutdown sessions, paths, index precedence/fallback)`);
