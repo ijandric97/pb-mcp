@@ -15,8 +15,8 @@
 ;     the --output spelling (no "/"-switches there).
 ;   - the program runs exactly ONCE, cwd = the staged entry directory
 ;     (relative data files resolve inside the copied project)
-;   - timeout: poll ProgramRunning() at ~15 ms; kill via taskkill /PID /T /F
-;     (whole tree) + KillProgram backstop; panic deadline +10 s
+;   - per-run jobs/groups terminate descendants after normal exit or timeout;
+;     the launch worker also contains children if the server exits
 ;   - the temp tree is always cleaned up, also on the error path
 ;
 ; Source-encoding rule: UTF-8 WITH BOM (see console.pb header).

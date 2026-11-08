@@ -16,7 +16,7 @@
 #   dist/skills/purebasic/        complete skill (SKILL.md + references/)
 #
 # Builds in a sibling staging directory; the previous dist/ stays intact
-# until the new bundle builds, copies, and passes its smoke check.
+# until the new bundle builds, copies, and passes its acceptance suite.
 # ---------------------------------------------------------------------------
 set -u
 cd "$(dirname "$0")" || exit 1
@@ -58,6 +58,9 @@ cp -R skills/purebasic/. "$STAGE/skills/purebasic/" || fail
 # the suite's timing-sensitive tests)
 echo "make-dist: smoke - staged pbmcp version"
 "$STAGE/pbmcp" version >/dev/null 2>&1 || fail
+
+echo "make-dist: testing staged pbmcp"
+PBMCP_EXE="$STAGE/pbmcp" node test/run_tests.mjs || fail
 
 # A failed old-bundle rename leaves dist/ untouched; a failed publish restores it.
 if [ -e dist ] || [ -L dist ]; then mv -- dist "$BACKUP" || fail; fi

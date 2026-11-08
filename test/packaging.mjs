@@ -46,6 +46,10 @@ function assertNoStaging() {
 try {
   copyFileSync(join(root, win ? 'make-dist.cmd' : 'make-dist.sh'), script);
   mkdirSync(join(scratch, 'src'), { recursive: true });
+  mkdirSync(join(scratch, 'test'), { recursive: true });
+  writeFileSync(join(scratch, 'test', 'run_tests.mjs'),
+    'if (process.env.FAIL_TESTS === "1") process.exit(1);\n' +
+    'if (!process.env.PBMCP_EXE) throw new Error("staged executable was not selected");\n');
   mkdirSync(join(scratch, 'skills', 'purebasic', 'references'), { recursive: true });
   writeFileSync(join(scratch, 'README.md'), 'readme');
   writeFileSync(join(scratch, 'INSTALL.md'), 'install');
@@ -94,6 +98,12 @@ try {
   assertNoStaging();
 
   previous = setPreviousDist();
+  result = run({ FAIL_TESTS: '1' });
+  assert.notEqual(result.status, 0, 'test failure unexpectedly succeeded');
+  assert.deepEqual(snapshot(dist), previous, 'test failure changed the previous bundle');
+  assertNoStaging();
+
+  previous = setPreviousDist();
   result = run();
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(existsSync(join(dist, 'previous.txt')), false, 'successful publish kept stale files');
@@ -121,7 +131,7 @@ try {
     }
   }
 
-  console.log(`packaging tests passed (${win ? 'make-dist.cmd' : 'make-dist.sh'}: build/copy/smoke failures, successful replacement${win ? ', locked executable' : ''})`);
+  console.log(`packaging tests passed (${win ? 'make-dist.cmd' : 'make-dist.sh'}: build/copy/smoke/test failures, successful replacement${win ? ', locked executable' : ''})`);
 } finally {
   const resolved = join(tempRoot, scratch.slice(tempRoot.length + 1));
   if (dirname(resolved) !== tempRoot) throw new Error(`unsafe cleanup target: ${resolved}`);

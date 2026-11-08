@@ -55,7 +55,7 @@ for (const value of [null, 42, []]) {
 
 // Mix main-thread compiler/config work with preload to reproduce the old race.
 const replay = [
-  { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26' } },
+  { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'regression-test', version: '0' } } },
   { jsonrpc: '2.0', id: 2, method: 'tools/list' },
   call(3, 'pb_check', { file: join(scratch, 'missing.pb') }),
   call(4, 'pb_docs_search', { query: '日本語🚀' }),

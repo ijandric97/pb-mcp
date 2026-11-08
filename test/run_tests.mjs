@@ -129,6 +129,7 @@ let nid = 0;
 const req = (method, params) => ({ jsonrpc: "2.0", id: ++nid, method, params });
 const notify = (method, params) => ({ jsonrpc: "2.0", method, params });
 const call = (name, args) => req("tools/call", { name, arguments: args });
+const initializeRequest = () => req("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test-suite", version: "0" } });
 const text = (m) => m?.result?.content?.[0]?.text ?? "";
 
 // ===========================================================================
@@ -179,7 +180,7 @@ console.log("\n[1] framing + multibyte (100-line session)");
     responses.push(i);
   }
 
-  reqF("initialize", { protocolVersion: "2025-03-26", clientInfo: { name: "framing-test", version: "0" } });
+  reqF("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "framing-test", version: "0" } });
   notifyF("notifications/initialized");
   reqF("tools/list", {});
   let k = 0;
@@ -292,7 +293,7 @@ console.log("\n[2] protocol + pb_version");
 
   // JSON-RPC 2.0: a request without a method is invalid -> -32600, id echoed
   const badReq = runPb(() => [
-    req("initialize", {}),
+    initializeRequest(),
     '{"jsonrpc":"2.0","id":99}',
   ]);
   const invalid = badReq.byId.get(99);
@@ -307,7 +308,7 @@ console.log("\n[2] protocol + pb_version");
 
   // pb_version tool + version CLI
   const sv = init?.result?.serverInfo?.version ?? "";
-  const v = runPb(() => [req("initialize", {}), call("pb_version", {})]);
+  const v = runPb(() => [initializeRequest(), call("pb_version", {})]);
   const vt = text(v.byId.get(2));
   check("pb_version: isError false", v.byId.get(2)?.result?.isError === false, vt);
   check("pb_version: line 1 = server name + serverInfo version + protocol",
@@ -353,7 +354,7 @@ console.log("\n[3] docs tools (pb_docs_search + pb_command)");
     ["Mid", "mundane"],
     ["Random", "mundane"],
   ];
-  const pb = runPb(() => [req("initialize", {}), ...COMMANDS.map(([name]) => call("pb_command", { name }))]);
+  const pb = runPb(() => [initializeRequest(), ...COMMANDS.map(([name]) => call("pb_command", { name }))]);
   check("[3] command session exits 0, stderr silent", pb.status === 0 && pb.stderr === "", pb.stderr);
   const cOut = (name) => text(pb.byId.get(COMMANDS.findIndex(([n]) => n === name) + 2));
   const cOk = (name) => pb.byId.get(COMMANDS.findIndex(([n]) => n === name) + 2)?.result?.isError === false;
@@ -410,7 +411,7 @@ console.log("\n[3] docs tools (pb_docs_search + pb_command)");
     ["window", { limit: 25 }],       // 12: max limit
     ["window", { limit: 26 }],       // 13: max-limit validation
   ];
-  const ps = runPb(() => [req("initialize", {}), ...QUERIES.map(([q, args]) => call("pb_docs_search", q === null ? args : { query: q, ...args }))]);
+  const ps = runPb(() => [initializeRequest(), ...QUERIES.map(([q, args]) => call("pb_docs_search", q === null ? args : { query: q, ...args }))]);
   check("[3] search session exits 0, stderr silent", ps.status === 0 && ps.stderr === "", ps.stderr);
   const sOut = (i) => text(ps.byId.get(i + 2));
   const sMsg = (i) => ps.byId.get(i + 2);
@@ -447,7 +448,7 @@ console.log("\n[3] docs tools (pb_docs_search + pb_command)");
     sErr(13) && /^MCP error -32602: Input validation error: .* at limit/.test(sOut(13)), sOut(13).slice(0, 160));
 
   // pb_command argument validation
-  const pv = runPb(() => [req("initialize", {}), call("pb_command", {})]);
+  const pv = runPb(() => [initializeRequest(), call("pb_command", {})]);
   check("absent name -> validation 'Required at name'", text(pv.byId.get(2)).endsWith("Required at name"), text(pv.byId.get(2)));
 }
 
@@ -460,7 +461,7 @@ console.log("\n[4] pb_check");
   // filename character, so the relative input must use '/' there.
   const relHello = ["test", "fixtures", "hello.pb"].join(IS_WIN ? "\\" : "/");
   const r = runPb(() => [
-    req("initialize", {}),
+    initializeRequest(),
     call("pb_check", { file: HELLO }),
     call("pb_check", { file: relHello }),   // relative: echoed as passed
     call("pb_check", { file: BAD }),
@@ -538,7 +539,7 @@ console.log("\n[5] pb_run: timeout / orphan / cleanup");
   };
   const tempBefore = pbmcpTempDirs();
   const r = runPb(() => [
-    req("initialize", {}),
+    initializeRequest(),
     call("pb_run", { file: HELLO }),
     call("pb_run", { file: HELLO, args: ["alpha", "beta gamma", "third"] }),
     call("pb_run", { file: BAD }),
@@ -599,7 +600,7 @@ console.log("\n[6] metrics (temp metrics file; shared live file untouched)");
   const metricsPath = join(outDir, "metrics.jsonl");
   rmSync(metricsPath, { force: true });
   const build = () => [
-    req("initialize", {}),
+    initializeRequest(),
     call("pb_check", { file: HELLO }),
     call("pb_run", { file: HELLO }),
   ];
@@ -732,7 +733,7 @@ console.log("\n[8] missing-index UX (live, scratch dirs only)");
   // [A] explicit env -> missing file
   {
     const env = { PUREBASIC_MCP_INDEX: missingPath };
-    const pb = runPb(() => [req("initialize", {}), call("pb_docs_search", { query: "window" }), call("pb_command", { name: "OpenWindow" })], env);
+    const pb = runPb(() => [initializeRequest(), call("pb_docs_search", { query: "window" }), call("pb_command", { name: "OpenWindow" })], env);
     const b1 = text(pb.byId.get(2)), b2 = text(pb.byId.get(3));
     check("[A] pb_docs_search is an error result", pb.byId.get(2)?.result?.isError === true, b1);
     check("[A] pb_command shares the missing-index path", pb.byId.get(3)?.result?.isError === true, b2);
@@ -743,7 +744,7 @@ console.log("\n[8] missing-index UX (live, scratch dirs only)");
   // [B] explicit env -> invalid JSON (engine suffix not gated)
   {
     const env = { PUREBASIC_MCP_INDEX: badPath };
-    const pb = runPb(() => [req("initialize", {}), call("pb_docs_search", { query: "window" })], env);
+    const pb = runPb(() => [initializeRequest(), call("pb_docs_search", { query: "window" })], env);
     const b = text(pb.byId.get(2));
     const prefix = `Index ${badPath} is not valid JSON: `;
     check("[B] prefix + hint, isError",
@@ -753,7 +754,7 @@ console.log("\n[8] missing-index UX (live, scratch dirs only)");
   // [C] an explicitly selected empty index reports no-index on any build.
   {
     const env = { ...noCacheEnv, PUREBASIC_MCP_INDEX: emptyPath };
-    const pb = runPb(() => [req("initialize", {}), call("pb_docs_search", { query: "window" })], env);
+    const pb = runPb(() => [initializeRequest(), call("pb_docs_search", { query: "window" })], env);
     const b = text(pb.byId.get(2));
     check("[C] empty index reports no-index (isError)",
       b === `${EMBEDDED_EMPTY}\n${HINT}` && pb.byId.get(2)?.result?.isError === true, b);
@@ -763,7 +764,7 @@ console.log("\n[8] missing-index UX (live, scratch dirs only)");
   {
     const env = { ...noCacheEnv, PUREBASIC_MCP_INDEX: emptyPath };
     const pb = runPb(() => [
-      req("initialize", {}), req("tools/list", {}), req("ping", {}), call("pb_check", { file: HELLO }),
+      initializeRequest(), req("tools/list", {}), req("ping", {}), call("pb_check", { file: HELLO }),
     ], env);
     check("[D] session exits 0, stderr silent", pb.status === 0 && pb.stderr === "", pb.stderr);
     const list = pb.byId.get(2);
@@ -881,7 +882,7 @@ try {
 }
 
 console.log("\n[12] compiler workflow, stdio lifecycle, and crawler regressions");
-for (const test of ["protocol.mjs", "compiler.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs", "packaging.mjs"]) {
+for (const test of ["protocol.mjs", "compiler.mjs", "processes.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs", "packaging.mjs"]) {
   try {
     console.log(execFileSync(process.execPath, [join(testDir, test)], {
       cwd: root, env: { ...pinEnv(), PBMCP_EXE: exe }, encoding: "utf8", timeout: 60000, windowsHide: true,

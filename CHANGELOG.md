@@ -4,6 +4,11 @@
 
 ### Added
 
+- Local release gates: distribution scripts run the full acceptance suite against
+  the staged binary before replacing the existing bundle. Failed tests preserve
+  the previous distribution.
+- Process regressions for descendants after success, timeout, and server exit;
+  partial-line compiler version output; and both PATH-only version reporters.
 - Automatic build-time documentation matching. Windows and Linux builds generate
   the embedded index from the help in the selected compiler's installation and
   verify the manual's version independently against the compiler version.
@@ -48,6 +53,16 @@
 
 ### Fixed
 
+- Each compiler/program run owns its descendants for its complete lifetime.
+  Windows launch workers join a kill-on-close job before starting user code;
+  Linux workers use a separate process group and parent-death notification.
+  Normal completion now terminates remaining children before temporary cleanup.
+- Compiler version detection reads bounded raw bytes so an unfinished output
+  line cannot bypass its 15-second deadline.
+- CLI and MCP version reports recognize a compiler discovered only through PATH,
+  even when its installation directory is unknown.
+- Initialization validates the required protocol version, capabilities object,
+  and client name/version before negotiating a successful MCP handshake.
 - The online crawler refuses to replace nonempty directories without its own
   manifest, and rechecks the destination before publishing a completed mirror.
 - Compiler diagnostics retain the actual error, line number, and source path
@@ -117,9 +132,11 @@
 
 ### Validation
 
-- Windows source-build acceptance suite: **163 passed, 0 failed**, including
+- Windows source-build acceptance suite: **164 passed, 0 failed**, including
   malformed requests/indexes, batch framing, bounded stderr, partial-write and
   publication failures, packaging, and installed-help integration checks.
+- The local Windows release gate passed end to end in an isolated copy, including
+  its full acceptance suite and replacement of the previous test bundle.
 - Native thread-safe syntax check, UTF-8 BOM lint, and the full source build
   passed with PureBasic 6.41. Windows packaging tests covered build/copy/smoke
   failures, replacement, and a locked executable. Linux packaging passed isolated

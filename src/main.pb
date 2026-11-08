@@ -40,6 +40,8 @@ XIncludeFile "tools.pb"     ; registry + docs handlers (implements the hooks)
 XIncludeFile "html_scan.pb" ; HTML scanner + scan CLI mode
 XIncludeFile "http.pb"      ; optional localhost Streamable HTTP transport
 
+If ProgramParameter(0) = "--job-worker" : End RunJobWorker() : EndIf
+
 Procedure.i ParseHttpOptions(*port.Integer, *authPath.String, *allowCompiler.Integer, *error.String)
   *port\i = #HTTP_DEFAULT_PORT
   *allowCompiler\i = #False
@@ -131,6 +133,7 @@ Procedure RunVersionMode()
   PrintN(#BinName$ + " " + #SERVER_NAME$ + " " + ServerVersionFull() + ", MCP protocol " + #PROTOCOL_VERSION$)
   Protected home$ = ConfigPbHome()
   Protected pb$ = ConfigVersion()
+  If home$ = "" And pb$ <> "" : home$ = ConfigCompiler() : EndIf
   If home$ = ""
     PrintN("PureBasic: not found (set PUREBASIC_HOME or install PureBasic)")
   ElseIf pb$ = ""

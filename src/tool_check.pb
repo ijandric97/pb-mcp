@@ -22,7 +22,7 @@
 ;     motivated the whole pipeline; verified harmless-but-correct on 6.40)
 ;   - one retry when the compiler fails WITHOUT a line number (AV file-lock
 ;     flake: "Error: Assembler / error: write failed.")
-;   - timeout kills the whole tree (taskkill /PID x /T /F, no shell)
+;   - per-run jobs/groups contain descendants on success, timeout, or server exit
 ;   - temp dir always cleaned (retry with backoff; fresh exes are briefly
 ;     AV-locked); cleanup failure is never surfaced
 ;
@@ -315,35 +315,115 @@ Procedure.s ProcQ(Arg$)
   ProcedureReturn Arg$
 EndProcedure
 
-; Tree-kill, whole child tree.
-;   Windows: taskkill /PID <pid> /T /F spawned without shell (plan
-;   requirement; /T takes the whole child tree - KillProgram alone only
-;   kills the direct child).
-;   Linux (S7-sealed): KillProgram on the direct child leaves grandchildren
-;   alive (spike survivors: two `sleep 60` processes outlived the killed
-;   parent), so the child runs under setsid (see RunProcessCapture), making
-;   PGID == the observed PID: TERM the whole group, give well-behaved
-;   children a 500 ms grace, then KILL the group unconditionally (against
-;   an already-reaped group the signal is a no-op, never a surfaced error).
-;   The caller's KillProgram backstop still covers the direct child.
-;   "kill" resolves through PATH (util-linux/procps - present on every
-;   glibc distro); if it cannot spawn, the backstop alone remains, exactly
-;   like the Windows taskkill-unresolvable path.
-Procedure KillTree(Pid.i)
-  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
-    Protected p.i = RunProgram("taskkill", "/PID " + Str(Pid) + " /T /F", "",
-                               #PB_Program_Wait | #PB_Program_Hide)
-    If p = 0
-      ; taskkill unresolvable - the direct-kill fallback is
-      ; handled by the caller's KillProgram backstop
-    EndIf
-  CompilerElse
-    If RunProgram("kill", "-TERM -- -" + Str(Pid), "", #PB_Program_Wait | #PB_Program_Hide)
-      Delay(500)
-    EndIf
-    RunProgram("kill", "-KILL -- -" + Str(Pid), "", #PB_Program_Wait | #PB_Program_Hide)
-  CompilerEndIf
+CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+Import "kernel32.lib"
+  JobCreate(*attributes, *name) As "CreateJobObjectW"
+  JobOpen(access.l, inherit.l, *name) As "OpenJobObjectW"
+  JobAssign(job.i, process.i) As "AssignProcessToJobObject"
+  JobSetLimits(job.i, infoClass.l, *info, size.l) As "SetInformationJobObject"
+  JobTerminate(job.i, exitCode.l) As "TerminateJobObject"
+EndImport
+; Native job structures are not supplied by PureBasic's Windows residents.
+Structure JobBasicLimitsT Align #PB_Structure_AlignC
+  processTime.q
+  jobTime.q
+  flags.l
+  minWorkingSet.i
+  maxWorkingSet.i
+  activeProcesses.l
+  affinity.i
+  priority.l
+  scheduling.l
+EndStructure
+Structure JobLimitsT Align #PB_Structure_AlignC
+  basic.JobBasicLimitsT
+  ioCounters.q[6]
+  processMemory.i
+  jobMemory.i
+  peakProcessMemory.i
+  peakJobMemory.i
+EndStructure
+#PBMCP_JOB_EXTENDED_LIMITS = 9
+#PBMCP_JOB_KILL_ON_CLOSE = $2000
+#PBMCP_JOB_ASSIGN_PROCESS = 1
+
+; The worker joins the job before starting user code. The server alone owns
+; the job handle, so server exit also terminates every contained process.
+Procedure.i RunJobWorker()
+  Protected name$ = ProgramParameter(1), eventName$ = name$ + "-started"
+  Protected job.i = JobOpen(#PBMCP_JOB_ASSIGN_PROCESS, #False, @name$)
+  If job = 0 : ProcedureReturn 1 : EndIf
+  If JobAssign(job, GetCurrentProcess_()) = 0
+    CloseHandle_(job)
+    ProcedureReturn 1
+  EndIf
+  CloseHandle_(job)
+  Protected started.i = OpenEvent_(#EVENT_MODIFY_STATE, #False, @eventName$)
+  If started = 0 : ProcedureReturn 1 : EndIf
+  Protected command$ = ProcQ(ProgramParameter(2)), k.i
+  For k = 3 To CountProgramParameters() - 1
+    command$ + " " + ProcQ(ProgramParameter(k))
+  Next
+  Protected startup.STARTUPINFO, child.PROCESS_INFORMATION, exitCode.l = 1
+  startup\cb = SizeOf(STARTUPINFO)
+  startup\dwFlags = #STARTF_USESTDHANDLES | #STARTF_USESHOWWINDOW
+  startup\wShowWindow = #SW_HIDE
+  startup\hStdInput = GetStdHandle_(#STD_INPUT_HANDLE)
+  startup\hStdOutput = GetStdHandle_(#STD_OUTPUT_HANDLE)
+  startup\hStdError = GetStdHandle_(#STD_ERROR_HANDLE)
+  If CreateProcess_(0, @command$, 0, 0, #True, #CREATE_NO_WINDOW, 0, 0, @startup, @child)
+    SetEvent_(started)
+    CloseHandle_(started)
+    CloseHandle_(child\hThread)
+    WaitForSingleObject_(child\hProcess, #INFINITE)
+    GetExitCodeProcess_(child\hProcess, @exitCode)
+    CloseHandle_(child\hProcess)
+  Else
+    CloseHandle_(started)
+  EndIf
+  ProcedureReturn exitCode
 EndProcedure
+CompilerElse
+ImportC ""
+  ProcessGroupSignal(pid.l, signal.l) As "kill"
+  ProcessOwnPid() As "getpid"
+  ProcessParentPid() As "getppid"
+  ProcessSetSignal(signal.l, *handler) As "signal"
+  ProcessParentDeath(option.l, signal.i, arg3.i, arg4.i, arg5.i) As "prctl"
+EndImport
+#PBMCP_PR_SET_PDEATHSIG = 1
+
+; setsid gives each run its own group, including descendants whose parent exits.
+Procedure KillTree(Pid.i)
+  If ProcessGroupSignal(-Pid, 15) = 0 : Delay(500) : EndIf
+  ProcessGroupSignal(-Pid, 9)
+EndProcedure
+
+ProcedureC RunParentExited(signal.l)
+  ProcessGroupSignal(-ProcessOwnPid(), 9)
+EndProcedure
+
+Procedure.i RunJobWorker()
+  ProcessSetSignal(15, @RunParentExited())
+  If ProcessParentDeath(#PBMCP_PR_SET_PDEATHSIG, 15, 0, 0, 0) <> 0 : ProcedureReturn 1 : EndIf
+  ; The server may have exited between spawning this worker and prctl().
+  If ProcessParentPid() <> Val(ProgramParameter(1))
+    RunParentExited(15)
+    ProcedureReturn 1
+  EndIf
+  Protected params$ = "", k.i
+  For k = 3 To CountProgramParameters() - 1
+    If k > 3 : params$ + " " : EndIf
+    params$ + ProcQ(ProgramParameter(k))
+  Next
+  Protected p.i = RunProgram(ProgramParameter(2), params$, GetCurrentDirectory(), #PB_Program_Open | #PB_Program_Hide)
+  If p = 0 : ProcedureReturn 1 : EndIf
+  WaitProgram(p)
+  Protected exitCode.i = ProgramExitCode(p)
+  CloseProgram(p)
+  ProcedureReturn exitCode
+EndProcedure
+CompilerEndIf
 
 Procedure CaptureErrorLine(Line$, List Lines$(), *Count.Integer, *Truncated.Integer)
   ; shortcut: ReadProgramError allocates a full line; use raw pipe reads if peak memory needs a strict cap.
@@ -371,24 +451,30 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
   Protected t0.i = ElapsedMilliseconds()
   Protected p.i
   CompilerIf #PB_Compiler_OS = #PB_OS_Linux
-    ; setsid makes the child a session+group leader (PGID == PID) so one
-    ; group signal reaches the whole tree (see KillTree). util-linux setsid
-    ; execs the program directly - no fork - when it is not already a group
-    ; leader, which is the case for a freshly spawned child, so ProgramID()
-    ; IS the program's PID/PGID. If setsid itself cannot spawn, fall back to
-    ; a direct spawn: correct behavior, tree-kill degrades to the
-    ; KillProgram backstop.
-    p = RunProgram("setsid", Trim(ProcQ(Exe$) + " " + Params$), WorkingDir$, 
+    ; The worker leads the group and kills it if the server exits.
+    p = RunProgram("setsid", ProcQ(ProgramFilename()) + " --job-worker " + Str(ProcessOwnPid()) + " " + ProcQ(Exe$) + " " + Params$, WorkingDir$,
                    #PB_Program_Open | #PB_Program_Read | #PB_Program_Error | #PB_Program_Hide)
-    If p = 0
-      p = RunProgram(Exe$, Params$, WorkingDir$,
-                     #PB_Program_Open | #PB_Program_Read | #PB_Program_Error | #PB_Program_Hide)
-    EndIf
   CompilerElse
-    p = RunProgram(Exe$, Params$, WorkingDir$,
-                   #PB_Program_Open | #PB_Program_Read | #PB_Program_Error | #PB_Program_Hide)
+    Protected jobName$ = "Local\pbmcp-" + Str(GetCurrentProcessId_()) + "-" + Str(ElapsedMilliseconds()) + "-" + Str(Random(2147483647))
+    Protected eventName$ = jobName$ + "-started"
+    Protected job.i = JobCreate(0, @jobName$), started.i
+    Protected limits.JobLimitsT
+    limits\basic\flags = #PBMCP_JOB_KILL_ON_CLOSE
+    If job And GetLastError_() <> #ERROR_ALREADY_EXISTS
+      If JobSetLimits(job, #PBMCP_JOB_EXTENDED_LIMITS, @limits, SizeOf(limits))
+        started = CreateEvent_(0, #True, #False, @eventName$)
+        If started And GetLastError_() <> #ERROR_ALREADY_EXISTS
+          p = RunProgram(ProgramFilename(), "--job-worker " + ProcQ(jobName$) + " " + ProcQ(Exe$) + " " + Params$, WorkingDir$,
+                         #PB_Program_Open | #PB_Program_Read | #PB_Program_Error | #PB_Program_Hide)
+        EndIf
+      EndIf
+    EndIf
   CompilerEndIf
   If p = 0
+    CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+      If started : CloseHandle_(started) : EndIf
+      If job : CloseHandle_(job) : EndIf
+    CompilerEndIf
     *r\spawnFailed = #True
     *r\durationMs = ElapsedMilliseconds() - t0
     ProcedureReturn
@@ -468,7 +554,11 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
     If killIssued = #False And ElapsedMilliseconds() - t0 >= TimeoutMs
       *r\timedOut = #True
       killIssued = #True
-      KillTree(ProgramID(p))
+      CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+        JobTerminate(job, 1)
+      CompilerElse
+        KillTree(ProgramID(p))
+      CompilerEndIf
       KillProgram(p)
     EndIf
     If killIssued And ElapsedMilliseconds() - t0 > panicAt
@@ -486,6 +576,15 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
       Delay(15)
     EndIf
   Wend
+
+  ; Reap descendants before draining inherited pipes and removing their exe.
+  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+    *r\spawnFailed = Bool(WaitForSingleObject_(started, 0) <> #WAIT_OBJECT_0)
+    CloseHandle_(started)
+    CloseHandle_(job)
+  CompilerElse
+    If Not killIssued : KillTree(ProgramID(p)) : EndIf
+  CompilerEndIf
 
   ; final drain (buffered output after exit / after kill)
   While AvailableProgramOutput(p)

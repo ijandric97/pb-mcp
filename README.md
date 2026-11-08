@@ -44,6 +44,8 @@ The compiler tools (`pb_check`, `pb_run`) work without an index.
   binary (Ubuntu 24.04+); on older distros use the compiler your distro can
   run. If linking fails with `undefined reference to __wrap_memcpy`, see the
   gcc wrapper note in `INSTALL.md` (PB 6.41 + modern binutils).
+  Compiler execution also requires `setsid` from util-linux to isolate each
+  process group.
 
 ## Build from source (including the JSON index)
 
@@ -168,9 +170,9 @@ interpretation; the root only selects what gets staged:
     make-dist.cmd    (Windows)  /  make-dist.sh    (Linux)
 
 Builds the binary and matching installed-help index in a sibling staging
-directory (via the `PBMCP_OUT` override), assembles the bundle, and smoke-tests
-that the artifact launches before replacing `dist/`. Failed builds preserve
-the previous distribution:
+directory (via the `PBMCP_OUT` override), assembles the bundle, and runs the full
+local acceptance suite against the staged binary before replacing `dist/`.
+Failed builds or tests preserve the previous distribution:
 
     dist/pbmcp[.exe]                  native server binary
     dist/index-*.json                 newest repo-root docs index (working drop-in;
@@ -200,6 +202,8 @@ session. Check each coherent edit batch before delivery. `pb_run` rejects
 arguments containing double quotes, NUL, or newlines. Supported arguments are
 passed as separate program parameters. Its executable and compiler artifacts stay in temporary
 storage, while relative includes and runtime data paths use the original source.
+Remaining processes in each run's Windows job or Linux process group are
+terminated after normal exit, timeout, or server termination.
 
 ## Client configuration
 
@@ -356,7 +360,9 @@ The suite does not download the live documentation.
 
 Highlights: 7-byte dribble stress cutting UTF-8 chars across stdin chunk
 boundaries, byte-exact error paths, pb_run timeout/orphan/cleanup gates,
-and missing-index UX paths. Set `PUREBASIC_HOME` to the installation to test.
+descendant cleanup after normal exit and server termination, partial-line compiler
+version timeouts, PATH-only version reports, and missing-index UX paths.
+Set `PUREBASIC_HOME` to the installation to test.
 
 ## Layout
 

@@ -170,6 +170,7 @@ const captureExe = join(scratch, 'capture-probe' + suffix);
 const includes = ['console', 'jsonrpc', 'config', 'metrics', 'docs_index', 'tool_check', 'tool_run', 'tools'];
 writeFileSync(captureSource, '\uFEFFEnableExplicit\n' + includes.map(name =>
   `XIncludeFile "${join(root, 'src', name + '.pb')}"`).join('\n') + `
+If ProgramParameter(0) = "--job-worker" : End RunJobWorker() : EndIf
 If OpenConsole() = 0 : End 1 : EndIf
 Define captured.RunResT
 RunProcessCapture("${stderrExe}", "", "${scratch}", 10000, @captured)

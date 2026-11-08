@@ -17,7 +17,7 @@ rem   dist\INSTALL.md
 rem   dist\skills\purebasic\         complete skill (SKILL.md + references\)
 rem
 rem Builds in a sibling staging directory; the previous dist\ stays intact
-rem until the new bundle builds, copies, and passes its smoke check.
+rem until the new bundle builds, copies, and passes its acceptance suite.
 rem ---------------------------------------------------------------------------
 cd /d "%~dp0" || exit /b 1
 
@@ -57,6 +57,11 @@ rem scanning - a never-executed fresh exe can fail to start in time under
 rem the suite's timing-sensitive tests)
 echo make-dist: smoke - staged pbmcp.exe version
 "%STAGE%\pbmcp.exe" version >nul 2>&1 || goto :fail
+
+echo make-dist: testing staged pbmcp.exe
+set "PBMCP_EXE=%STAGE%\pbmcp.exe"
+node "%~dp0test\run_tests.mjs"
+if errorlevel 1 goto :fail
 
 rem Move the old bundle aside first; if Windows still has its exe locked,
 rem this fails without deleting or changing dist\.

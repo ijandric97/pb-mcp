@@ -343,6 +343,7 @@ Procedure ToolVersion(IdValue.i, Args.i)
   Protected out$ = #SERVER_NAME$ + " " + ServerVersionFull() + ", MCP protocol " + ActiveProtocolVersion()
   Protected home$ = ConfigPbHome()
   Protected pb$ = ConfigVersion()
+  If home$ = "" And pb$ <> "" : home$ = ConfigCompiler() : EndIf
   If home$ = ""
     out$ + Chr(10) + "PureBasic: not found (set PUREBASIC_HOME or install PureBasic)"
   ElseIf pb$ = ""

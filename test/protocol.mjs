@@ -11,6 +11,7 @@ mkdirSync(scratch, { recursive: true });
 const env = { ...process.env, PUREBASIC_MCP_NO_METRICS: '1', PBMCP_DOCS_TIMING: '0',
   PUREBASIC_MCP_INDEX: join(root, 'test', 'fixtures', 'docs-index.json') };
 const request = (id, method = 'ping', params) => ({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
+const initParams = { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'protocol-test', version: '0' } };
 function session(messages, fileMode = false) {
   const input = messages.map(JSON.stringify).join('\n') + '\n';
   const file = join(scratch, 'session.jsonl');
@@ -40,6 +41,28 @@ for (const [message, code, id] of invalid) {
   assert.equal(responses[0].id, id);
   assert.deepEqual(responses[1], { jsonrpc: '2.0', id: 'still-alive', result: {} });
 }
+
+const invalidInitialize = [
+  request(1, 'initialize'),
+  ...[null, [], 'bad'].map(params => request(1, 'initialize', params)),
+  ...[
+    {},
+    { ...initParams, protocolVersion: 42 },
+    { ...initParams, capabilities: null },
+    { ...initParams, clientInfo: [] },
+    { ...initParams, clientInfo: { version: '0' } },
+    { ...initParams, clientInfo: { name: 'protocol-test' } },
+  ].map(params => request(1, 'initialize', params)),
+];
+for (const message of invalidInitialize) {
+  const [response, next] = session([message, request('still-alive')]);
+  assert.equal(response.error?.code, -32602, JSON.stringify(response));
+  assert.equal(response.id, 1);
+  assert.deepEqual(next, { jsonrpc: '2.0', id: 'still-alive', result: {} });
+}
+const initialized = session([request(1, 'initialize', initParams)])[0];
+assert.equal(initialized.result.protocolVersion, '2025-03-26');
+assert.equal(initialized.result.serverInfo.name, 'purebasic-mcp-pb');
 
 const batch = [request(0), { jsonrpc: '2.0', method: 'ping' }, null, [],
   { jsonrpc: '2.0', id: 9 }, request('工具🚀', 'tools/call', { name: 'missing' }), request('', 'tools/list')];

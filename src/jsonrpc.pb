@@ -296,13 +296,26 @@ Procedure HandleRequest(Root.i)
         ; Version negotiation (MCP spec MUST): answer with a version the
         ; server supports - echo the client's offer only when it matches the
         ; supported version, otherwise reply with #PROTOCOL_VERSION$.
-        Protected supportedVersion$ = ActiveProtocolVersion()
-        Protected pv$ = supportedVersion$
-        If params
-          Protected pvm.i = GetJSONMember(params, "protocolVersion")
-          If pvm And JSONType(pvm) = #PB_JSON_String And GetJSONString(pvm) = supportedVersion$
-            pv$ = GetJSONString(pvm)
-          EndIf
+        If params = 0
+          SendError(idM, -32602, "Invalid params for initialize")
+          ProcedureReturn
+        EndIf
+        Protected pvm.i = GetJSONMember(params, "protocolVersion")
+        Protected initCaps.i = GetJSONMember(params, "capabilities")
+        Protected clientInfo.i = GetJSONMember(params, "clientInfo")
+        If pvm = 0 Or JSONType(pvm) <> #PB_JSON_String Or initCaps = 0 Or JSONType(initCaps) <> #PB_JSON_Object Or clientInfo = 0 Or JSONType(clientInfo) <> #PB_JSON_Object
+          SendError(idM, -32602, "Invalid params for initialize")
+          ProcedureReturn
+        EndIf
+        Protected clientName.i = GetJSONMember(clientInfo, "name")
+        Protected clientVersion.i = GetJSONMember(clientInfo, "version")
+        If clientName = 0 Or JSONType(clientName) <> #PB_JSON_String Or clientVersion = 0 Or JSONType(clientVersion) <> #PB_JSON_String
+          SendError(idM, -32602, "Invalid params for initialize")
+          ProcedureReturn
+        EndIf
+        Protected pv$ = ActiveProtocolVersion()
+        If GetJSONString(pvm) = ActiveProtocolVersion()
+          pv$ = GetJSONString(pvm)
         EndIf
         Protected resp.i = BeginResponse(idM)
         Protected result.i = GetJSONMember(JSONValue(resp), "result")

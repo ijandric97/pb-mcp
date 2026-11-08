@@ -66,17 +66,26 @@ Procedure.s ConfigDetectVersion(compilerPath$)
                              #PB_Program_Open | #PB_Program_Read | #PB_Program_Hide)
   If p = 0 : ProcedureReturn "" : EndIf
   Protected out$ = "", t0.i = ElapsedMilliseconds()
-  While ProgramRunning(p) And ElapsedMilliseconds() - t0 < #VERSION_TIMEOUT_MS
-    If AvailableProgramOutput(p)
-      out$ + ReadProgramString(p, #ProgReadFmt) + Chr(10)
-    Else
-      Delay(5)
-    EndIf
-  Wend
+  Protected *buffer = AllocateMemory(65536), kept.i, available.i, n.i
+  If *buffer
+    Repeat
+      available = AvailableProgramOutput(p)
+      If available > 0
+        If available > 65536 - kept : available = 65536 - kept : EndIf
+        n = ReadProgramData(p, *buffer + kept, available)
+        If n <= 0 : Break : EndIf
+        kept + n
+        If kept = 65536 : Break : EndIf
+      ElseIf Not ProgramRunning(p)
+        Break
+      Else
+        Delay(5)
+      EndIf
+    Until ElapsedMilliseconds() - t0 >= #VERSION_TIMEOUT_MS
+    If kept > 0 : out$ = PeekS(*buffer, kept, #ProgReadFmt | #PB_ByteLength) : EndIf
+    FreeMemory(*buffer)
+  EndIf
   If ProgramRunning(p) : KillProgram(p) : EndIf
-  While AvailableProgramOutput(p)   ; drain what is left after exit
-    out$ + ReadProgramString(p, #ProgReadFmt) + Chr(10)
-  Wend
   CloseProgram(p)
 
   Protected version$ = ""
