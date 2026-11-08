@@ -6,6 +6,7 @@
 ;   pbmcp version        build + environment report (server/protocol/
 ;   pbmcp --version      PureBasic/docs versions), exit 0 (0.3.3)
 ;   pbmcp scan <html>    parse one command page as JSON
+;   pbmcp scan-batch <manifest.json>  parse command pages in one process
 ;   pbmcp test <file>    replay a golden .jsonl session (one msg per line)
 ;   pbmcp <file>         same as "test <file>" (spike compatibility)
 ;   pbmcp http [--port N] --auth-file PATH [--allow-compiler-tools]
@@ -16,7 +17,7 @@
 ; License: MIT - see LICENSE in the repository root
 ;
 ; Build:  build.cmd            (encoding lint + 6.40 compile)
-; Check:  build.cmd check      (6.40 /CHECK on the real tree - authoritative)
+; Check:  build.cmd check      (thread-safe /CHECK on the complete source tree)
 ;
 ; Include order matters (single pass): console -> jsonrpc -> config ->
 ; metrics -> docs_index -> tool_check (shared pipeline) -> tool_run -> tools -> http.
@@ -24,13 +25,17 @@
 ; ---------------------------------------------------------------------------
 EnableExplicit
 
+CompilerIf #PB_Compiler_Thread = 0
+  CompilerError "Documentation preload requires a thread-safe build (/THREAD or --thread)."
+CompilerEndIf
+
 XIncludeFile "console.pb"   ; WriteLine / RunFile / RunStdin (declares HandleLine)
 XIncludeFile "jsonrpc.pb"   ; HandleLine + response builders (declares tool hooks)
 XIncludeFile "config.pb"    ; PB home discovery, /VERSION detect, capability flags, ResolvePath
 XIncludeFile "metrics.pb"   ; JSONL metrics (needs config: ConfigCacheDir$, jsonrpc: JsonQ)
 XIncludeFile "docs_index.pb"; index load + search + lookup (needs config, jsonrpc MemberStr)
 XIncludeFile "tool_check.pb"; shared pipeline + pb_check (needs jsonrpc, config, metrics)
-XIncludeFile "tool_run.pb"  ; pb_run (needs tool_check's runner/temp-copy/parsing)
+XIncludeFile "tool_run.pb"  ; pb_run (needs tool_check's runner/temp-output/parsing)
 XIncludeFile "tools.pb"     ; registry + docs handlers (implements the hooks)
 XIncludeFile "html_scan.pb" ; HTML scanner + scan CLI mode
 XIncludeFile "http.pb"      ; optional localhost Streamable HTTP transport
@@ -146,6 +151,8 @@ Define arg$ = ProgramParameter(0)
 Define httpPort.Integer, httpError.String, httpAuthPath.String, httpAllowCompiler.Integer
 If arg$ = "scan"
   RunScanMode()
+ElseIf arg$ = "scan-batch"
+  RunScanBatchMode()
 ElseIf arg$ = "version" Or arg$ = "--version" Or arg$ = "-v"
   RunVersionMode()
 ElseIf arg$ = "test"

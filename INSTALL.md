@@ -293,10 +293,14 @@ alternative.
 The bundle ships a ready `index-6.40.json`; the docs tools
 (`pb_docs_search` / `pb_command`) answer from it out of the box.
 
-To switch to a different PureBasic help version, get the matching
-`index-<version>.json` (built once with Node from the official online docs —
-see the build recipe in `README.md`) and drop it next to the binary. The
-newest `index-*.json` in the exe's directory wins; old versions keep working.
+Source builds automatically generate the index from the selected compiler's
+installed help and verify their versions match. After upgrading PureBasic,
+rebuild with `build.cmd` / `bash build.sh`, or regenerate the bundle with
+`make-dist.cmd` / `bash make-dist.sh`, then reconnect the client.
+
+To deliberately use a different PureBasic help version, drop its
+`index-<version>.json` next to the binary or set `PUREBASIC_MCP_INDEX`. The
+newest `index*.json` in the exe's directory wins; old versions keep working.
 
 Without any index the server still starts and `pb_check` / `pb_run` work —
 only the docs tools answer with a build hint.
@@ -364,10 +368,11 @@ on Linux.
   alone.
 - **Docs tools answer with an index hint** — no usable index found; drop an
   `index-<version>.json` next to the binary or set `PUREBASIC_MCP_INDEX`.
-- **Index out of date after a PureBasic upgrade** — build the matching
-  `index-<version>.json` (see `README.md`) and drop it next to the binary;
-  it is selected automatically (newest by mtime), and old versions keep
-  working.
+- **Index out of date after a PureBasic upgrade** — rebuild the server or
+  distribution from source (see `README.md`). The build uses the installed
+  help automatically and rejects a compiler/help version mismatch. Check for
+  an old `PUREBASIC_MCP_INDEX` override or extra `index*.json` drop-in if
+  `pb_version` still reports another version.
 
 ---
 

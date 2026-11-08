@@ -3,7 +3,7 @@
 ; lookup + did-you-mean.
 ;
 ; The
-; index schema is FROZEN; the JSON is produced by
+; schemaVersion 1 includes an optional referenceText map; JSON is produced by
 ; tools/build-online-index.mjs and reaches the server one of two ways:
 ; dropped as index*.json next to the executable (keeps the exe small, makes
 ; switching PureBasic help versions a file copy) or baked into the binary
@@ -14,7 +14,7 @@
 ;   load       resolution order: PUREBASIC_MCP_INDEX env -> newest
 ;              index*.json next to the executable by mtime -> the
 ;              DataSection-embedded index (src/pbdocs-index.json) ->
-;              newest index-*.json in the cache dir; never
+;              newest index*.json in the cache dir; never
 ;              throws. An index with zero commands (the committed
 ;              placeholder) is reported as "no index" with an actionable
 ;              hint instead of a working-but-empty docs tool.
@@ -27,7 +27,7 @@
 ;              similarity = 1 - dist/maxLen (+0.2 containment bonus, cap 1);
 ;              suggestions: score > 0.3, top 5. Reference pages resolve by
 ;              exact lowercase title/id (0.3.1) - the index carries their
-;              file path, so the answer is the full-text URL locator.
+;              file path, shared local text, and the source URL.
 ;
 ;   #DOCS_URL_BASE$ + index reference "file" = online full-text URL
 ;              (file values are repo-relative like "reference/foo.html").
@@ -130,6 +130,15 @@ Procedure.i DocsIndexReference()
   ProcedureReturn GetJSONMember(JSONValue(gIndexJson), "reference")
 EndProcedure
 
+Procedure.s DocsReferenceText(File$)
+  If gIndexJson = 0 : ProcedureReturn "" : EndIf
+  Protected texts.i = GetJSONMember(JSONValue(gIndexJson), "referenceText")
+  If texts And JSONType(texts) = #PB_JSON_Object
+    ProcedureReturn MemberStr(texts, File$, "")
+  EndIf
+  ProcedureReturn ""
+EndProcedure
+
 ; --- process-lifetime normalized search records -----------------------------
 ; Built once at the end of a successful DocsIndexInit: lowercased fields the
 ; warm search path scores with no JSON traversal and no per-request LCase.
@@ -218,13 +227,13 @@ Procedure.s DocsExeDir()
   ProcedureReturn GetPathPart(ProgramFilename())
 EndProcedure
 
-; Newest index-*.json in a dir by mtime, or ""
+; Newest index*.json in a dir by mtime, or ""
 Procedure.s DocsFindNewestIndex(Dir$)
   Protected best$ = "", bestDate.i = 0
-  Protected h.i = ExamineDirectory(#PB_Any, Dir$, "index-*.json")
+  Protected h.i = ExamineDirectory(#PB_Any, Dir$, "index*.json")
   If h = 0 : ProcedureReturn "" : EndIf
   While NextDirectoryEntry(h)
-    If DirectoryEntryType(h) = #PB_DirectoryEntry_File
+    If DirectoryEntryType(h) = #PB_DirectoryEntry_File And LCase(GetExtensionPart(DirectoryEntryName(h))) = "json"
       Protected d.i = DirectoryEntryDate(h, #PB_Date_Modified)
       If best$ = "" Or d > bestDate
         bestDate = d
@@ -258,41 +267,42 @@ Procedure DocsIndexInit()
   EndIf
 
   Protected tLoad.i
-  Protected j.i
-  If DocsTimingOn() : tLoad = ElapsedMilliseconds() : EndIf
-  If embedded
-    j = CatchJSON(#PB_Any, ?EmbedIndexStart, ?EmbedIndexEnd - ?EmbedIndexStart)
-    path$ = "the embedded index (src/pbdocs-index.json)"
-  Else
-    j = LoadJSON(#PB_Any, path$)
-  EndIf
-  If DocsTimingOn() : gIndexLoadMs = ElapsedMilliseconds() - tLoad : EndIf
-  If j = 0
-    gIndexDetail$ = "Index " + path$ + " is not valid JSON: " + JSONErrorMessage() + " (line " + Str(JSONErrorLine()) + ")"
-    ProcedureReturn
-  EndIf
-
-  Protected root.i = JSONValue(j)
-  Protected cmds.i = GetJSONMember(root, "commands")
-  Protected refs.i = GetJSONMember(root, "reference")
-  If cmds = 0 Or JSONType(cmds) <> #PB_JSON_Array Or refs = 0 Or JSONType(refs) <> #PB_JSON_Array
-    FreeJSON(j)
-    gIndexDetail$ = "Index " + path$ + " failed schema validation: commands/reference arrays missing"
-    ProcedureReturn
-  EndIf
+  Protected j.i, root.i, cmds.i, refs.i
+  Repeat
+    If DocsTimingOn() : tLoad = ElapsedMilliseconds() : EndIf
+    If embedded
+      j = CatchJSON(#PB_Any, ?EmbedIndexStart, ?EmbedIndexEnd - ?EmbedIndexStart)
+      path$ = "the embedded index (src/pbdocs-index.json)"
+    Else
+      j = LoadJSON(#PB_Any, path$)
+    EndIf
+    If DocsTimingOn() : gIndexLoadMs + ElapsedMilliseconds() - tLoad : EndIf
+    If j = 0
+      gIndexDetail$ = "Index " + path$ + " is not valid JSON: " + JSONErrorMessage() + " (line " + Str(JSONErrorLine()) + ")"
+    Else
+      root = JSONValue(j)
+      cmds = GetJSONMember(root, "commands")
+      refs = GetJSONMember(root, "reference")
+      If cmds = 0 Or JSONType(cmds) <> #PB_JSON_Array Or refs = 0 Or JSONType(refs) <> #PB_JSON_Array
+        gIndexDetail$ = "Index " + path$ + " failed schema validation: commands/reference arrays missing"
+      ElseIf JSONArraySize(cmds) = 0
+        gIndexDetail$ = "Docs index has no commands - build one: node tools/build-online-index.mjs <docsRoot> --out pbdocs-index.json (drop index-*.json next to the executable to switch help versions)"
+      Else
+        Break
+      EndIf
+      FreeJSON(j)
+    EndIf
+    ; Only an unusable embedded index falls back; selected files keep their errors.
+    If Not embedded : ProcedureReturn : EndIf
+    path$ = DocsFindNewestIndex(ConfigCacheDir())
+    If path$ = "" : ProcedureReturn : EndIf
+    embedded = #False
+  ForEver
 
   ; byName map: lowercase name -> index; duplicates overwrite, so the LAST
   ; entry wins.
   gCmdCount = JSONArraySize(cmds)
   gRefCount = JSONArraySize(refs)
-  If gCmdCount = 0
-    ; The committed placeholder (or an index built from an empty tree):
-    ; report as no-index with the build hint instead of a working-but-empty
-    ; docs tool - the tool-level missing-index UX keys off gIndexOk.
-    FreeJSON(j)
-    gIndexDetail$ = "Docs index has no commands - build one: node tools/build-online-index.mjs <docsRoot> --out pbdocs-index.json (drop index-*.json next to the executable to switch help versions)"
-    ProcedureReturn
-  EndIf
   ClearMap(gByName())
   Protected i.i, e.i
   For i = 0 To gCmdCount - 1

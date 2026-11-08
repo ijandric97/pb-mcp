@@ -208,19 +208,15 @@ EndProcedure
 ; Tool handlers resolve user-supplied paths against the server cwd.
 ; Windows: forward slashes become backslashes, '.' and '..' segments
 ; collapse, relative paths anchor at the current directory. UNC paths pass
-; through untouched; drive-relative paths anchor at the cwd's drive.
+; through untouched; drive-relative paths anchor at the specified drive root.
 ; Linux (port Phase 1): leading "/" = absolute, "/" kept, '.'/'..' collapse,
 ; relative paths anchor at the cwd; no drive or UNC logic. Tool-facing
 ; semantics on both OSes: absolute paths in, absolute paths out.
 Procedure.s ResolvePath(P$)
   CompilerIf #PB_Compiler_OS = #PB_OS_Linux
-    Protected lroot$ = "", lrest$ = P$
-    If Left(lrest$, 1) = "/"
-      lroot$ = "/"
-      lrest$ = Mid(lrest$, 2)
-    Else
-      lroot$ = GetCurrentDirectory()
-      If Right(lroot$, 1) <> "/" : lroot$ + "/" : EndIf
+    Protected lroot$ = "/", lrest$ = P$
+    If Left(lrest$, 1) <> "/"
+      lrest$ = PathJoin(GetCurrentDirectory(), lrest$)
     EndIf
     ; segment walk: drop empty/".", pop on ".." (same walk as the Windows
     ; branch - golden behavior, separator-swapped only)
@@ -269,9 +265,8 @@ Procedure.s ResolvePath(P$)
     root$ = Left(GetCurrentDirectory(), 3)   ; \foo -> <cwd drive>\foo
     rest$ = Mid(s$, 2)
   Else
-    root$ = GetCurrentDirectory()
-    If Right(root$, 1) <> "\" : root$ + "\" : EndIf
-    rest$ = s$
+    ; Include cwd's segments so '..' can walk above the starting directory.
+    ProcedureReturn ResolvePath(PathJoin(GetCurrentDirectory(), s$))
   EndIf
   ; segment walk: drop empty/".", pop on ".."
   Protected NewList segs$()

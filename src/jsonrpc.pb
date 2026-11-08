@@ -241,9 +241,27 @@ EndProcedure
 ; ---------------------------------------------------------------------------
 ; request dispatch
 ; ---------------------------------------------------------------------------
+; PB strings truncate at NUL, so reject its JSON escape before decoding.
+Procedure.i JsonHasNul(Text$)
+  Protected pos.i = FindString(Text$, "\u0000"), before.i
+  While pos
+    before = pos - 1
+    While before > 0 And PeekU(@Text$ + (before - 1) * SizeOf(Character)) = 92
+      before - 1
+    Wend
+    If (pos - before) & 1 : ProcedureReturn #True : EndIf
+    pos = FindString(Text$, "\u0000", pos + 6)
+  Wend
+  ProcedureReturn #False
+EndProcedure
+
 Procedure HandleLine(Raw$)
   Protected line$ = RTrim(Trim(Raw$), Chr(13))
   If line$ = "" : ProcedureReturn : EndIf
+  If JsonHasNul(line$)
+    SendError(0, -32600, "NUL characters are not supported in JSON strings")
+    ProcedureReturn
+  EndIf
   Protected json.i = ParseJSON(#PB_Any, line$)
   If json = 0
     SendError(0, -32700, "Parse error")
@@ -298,7 +316,7 @@ Procedure HandleLine(Raw$)
         SetJSONObject(info)
         SetJSONString(AddJSONMember(info, "name"), #SERVER_NAME$)
         SetJSONString(AddJSONMember(info, "version"), ServerVersionFull())
-        Protected instructions$ = "Search before writing PureBasic (pb_docs_search, pb_command), verify every edit with pb_check, and use pb_run only for bounded console tests."
+        Protected instructions$ = "Use pb_command directly for known command names and pb_docs_search to discover names. Reuse documentation already retrieved in this session. Verify each coherent edit batch with pb_check before delivery; use pb_run for bounded noninteractive console tests."
         If gHttpMode And Not gHttpAllowCompilerTools
           instructions$ = "Search the PureBasic documentation with pb_docs_search and pb_command. This HTTP server exposes documentation tools only; compiler and execution tools are unavailable."
         EndIf

@@ -112,7 +112,7 @@ Procedure RunConsoleProgram(CompilerExe$, AbsFile$, ProjectRoot$, List ProgArgs$
   ; exe named after the source (hello.pb -> hello + #ExeSuffix$):
   ; friendlier than PureBasic<suffix>, and ProgramFilename() reports
   ; something meaningful. Windows keeps ".exe"; Linux output is extension-less.
-  Protected base$ = GetFilePart(copy\file)
+  Protected base$ = GetFilePart(AbsFile$)
   Protected dot.i = Len(base$)
   If dot > 3 And LCase(Right(base$, 3)) = ".pb" : dot - 3 : EndIf
   Protected runCwd$ = GetPathPart(copy\file)
@@ -156,7 +156,7 @@ Procedure RunConsoleProgram(CompilerExe$, AbsFile$, ProjectRoot$, List ProgArgs$
     EndIf
   EndIf
 
-  CleanupTempDir(copy\dir)
+  CleanupTempDir(copydir)
 
   *res\durationMs = ElapsedMilliseconds() - t0
   *res\ok = Bool(*res\hasRun And *res\runRes\exitCode = 0 And *res\runRes\timedOut = #False)
@@ -196,6 +196,14 @@ Procedure ToolRun(IdValue.i, Args.i)
         e = GetJSONElement(argsM, k - 1)
         If JSONType(e) <> #PB_JSON_String
           SendInvalidParams(IdValue, "pb_run", "Expected string, received " + JsonTypeName(e) + " at args." + Str(k - 1))
+          ProcedureReturn
+        EndIf
+        If FindString(GetJSONString(e), Chr(34))
+          SendInvalidParams(IdValue, "pb_run", "Double quotes are not supported in program arguments at args." + Str(k - 1))
+          ProcedureReturn
+        EndIf
+        If FindString(GetJSONString(e), Chr(10)) Or FindString(GetJSONString(e), Chr(13))
+          SendInvalidParams(IdValue, "pb_run", "Newlines are not supported in program arguments at args." + Str(k - 1))
           ProcedureReturn
         EndIf
         AddElement(progArgs$())

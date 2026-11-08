@@ -10,12 +10,12 @@
 ; its generic string helpers (CapText/OneLine/FirstSentence/CollapseLines) are
 ; needed by tool_run.pb, which includes this file EARLIER - so they live here,
 ; at the top of the shared pipeline layer. Same for the process runner and
-; temp-copy management: both tools use them, split across tool_check.pb and
+; temporary output management: both tools use them, split across tool_check.pb and
 ; tool_run.pb.
 ;
-; Pipeline semantics (frozen):
-;   - the user's source file is NEVER touched: compile a temp-dir copy
-;     (5.73 wrote PureBasic.exe next to the source; the temp dir isolates it)
+; Pipeline semantics:
+;   - compile the original source path so relative includes and resources resolve
+;   - the user's source file is NEVER modified; output stays in a temp directory
 ;   - compiler cwd = the temp dir (5.73 drops stray artifacts into cwd)
 ;   - /CHECK: syntax check only; /CONSOLE /EXE <abs>: build without launching
 ;     (5.73's plain /CONSOLE auto-launches the program - the orphan that
@@ -290,9 +290,7 @@ EndStructure
 ; ProgramParameter() child reported PBARG[1]=<b c>, i.e. one argv element,
 ; quotes consumed. The older community claim of quotes reaching the child
 ; verbatim (forum t=61786/t=81520) is disproven for current PB Linux. The
-; empty-arg '"·"' form is unmeasured on Linux but unreachable: call sites
-; pass only guarded, non-empty paths (see MakeTempCopy's whitespace guard -
-; quoting is the second belt, the /tmp fallback the first).
+; empty arguments use paired quotes; compiler paths are non-empty.
 ;
 ; Embedded '"' is NOT supported - probe-sealed 2026-10-13
 ; (tmp/probe_parent*.pb): a PB child's ProgramParameter() parser treats
@@ -302,8 +300,7 @@ EndStructure
 ; all, and CommandLineToArgvW '\'-escaping (probed, then REJECTED) injects
 ; phantom backslashes into exactly the child population this pipeline
 ; spawns: pbcompiler.exe for pb_check, a compiled fixture exe for pb_run -
-; both PB programs. Args carrying quotes therefore lose the quotes in the
-; child's argv (and may split at the quote); siblings stay intact.
+; both PB programs. ToolRun therefore rejects quote-bearing arguments.
 Procedure.s ProcQ(Arg$)
   If Arg$ = "" : ProcedureReturn Chr(34) + Chr(34) : EndIf
   If FindString(Arg$, " ", 1) Or FindString(Arg$, Chr(9), 1) : ProcedureReturn Chr(34) + Arg$ + Chr(34) : EndIf
@@ -1008,14 +1005,11 @@ Procedure.s ReadSourceWhole(File$)
   Protected f.i = ReadFile(#PB_Any, File$)
   If f = 0 : ProcedureReturn "" : EndIf
   Protected *buf = AllocateMemory(size + 1)
-  If *buf = 0 : CloseFile(f) : ProcedureReturn "" : EndIf   ; "" = unreadable, per the contract
-  If ReadData(f, *buf, size) <> size   ; short read: decoding `size` bytes would read garbage
-    CloseFile(f)
-    FreeMemory(*buf)
-    ProcedureReturn ""
-  EndIf
+  If *buf = 0 : CloseFile(f) : ProcedureReturn "" : EndIf
+  Protected bytes.i = ReadData(f, *buf, size)
   CloseFile(f)
-  Protected s$ = PeekS(*buf, size, #PB_UTF8 | #PB_ByteLength)
+  Protected s$ = ""
+  If bytes > 0 : s$ = PeekS(*buf, bytes, #PB_UTF8 | #PB_ByteLength) : EndIf
   FreeMemory(*buf)
   ProcedureReturn s$
 EndProcedure
@@ -1060,18 +1054,16 @@ EndProcedure
 ; One retry when the failure is line-less. Switch spellings are per-OS
 ; constants (#SW_* in config.pb): Windows "/CHECK" "/CONSOLE" "/EXE",
 ; Linux "--check" "--console" "--output" - "/"-switches do not exist there.
-Procedure CompilerStepWithRetry(CompilerExe$, Flag$, SrcFile$, ExeOut$, *r.RunResT)
+Procedure CompilerStepWithRetry(CompilerExe$, Flag$, SrcFile$, ExeOut$, WorkingDir$, *r.RunResT)
   Protected timeoutMs.i = #CHECK_TIMEOUT_MS
   If Flag$ = #SW_CONSOLE$ : timeoutMs = #COMPILE_TIMEOUT_MS : EndIf
   Protected params$ = Flag$
   If ExeOut$ <> "" : params$ + " " + #SW_EXE$ + " " + ProcQ(ExeOut$) : EndIf
   params$ + " " + ProcQ(SrcFile$)
-  Protected cwd$ = GetPathPart(SrcFile$)
-
-  RunProcessCapture(CompilerExe$, params$, cwd$, timeoutMs, *r)
+  RunProcessCapture(CompilerExe$, params$, WorkingDir$, timeoutMs, *r)
   If *r\exitCode <> 0 And *r\exitCode <> -1 And *r\timedOut = #False And IsTransientCompileFailure(*r\stdout)
     Delay(250)
-    RunProcessCapture(CompilerExe$, params$, cwd$, timeoutMs, *r)
+    RunProcessCapture(CompilerExe$, params$, WorkingDir$, timeoutMs, *r)
   EndIf
 EndProcedure
 
@@ -1203,15 +1195,16 @@ EndProcedure
 ; Per-line by design: PB has no multiline strings, so a stray quote can only
 ; degrade that one line, never leak across lines.
 Procedure.s BpStripLine(Line$)
-  Protected out$ = "", i.i = 1, n.i = Len(Line$), c$
+  Protected i.i = 1, n.i = Len(Line$), c.i, written.i = 0
+  Protected out$ = Space(n)
   While i <= n
-    c$ = Mid(Line$, i, 1)
-    If c$ = Chr(34)
+    c = PeekU(@Line$ + (i - 1) * SizeOf(Character))
+    If c = 34
       i + 1
       While i <= n
-        c$ = Mid(Line$, i, 1)
-        If c$ = Chr(34)
-          If Mid(Line$, i + 1, 1) = Chr(34)   ; "" = escaped quote, stays inside
+        c = PeekU(@Line$ + (i - 1) * SizeOf(Character))
+        If c = 34
+          If i < n And PeekU(@Line$ + i * SizeOf(Character)) = 34
             i + 2
           Else
             i + 1
@@ -1221,31 +1214,30 @@ Procedure.s BpStripLine(Line$)
           i + 1
         EndIf
       Wend
-      out$ + " "                              ; keep token separation
-    ElseIf c$ = ";"
+      written + 1                            ; prefilled space keeps token separation
+    ElseIf c = 59
       Break
     Else
-      out$ + c$
+      PokeU(@out$ + written * SizeOf(Character), c)
+      written + 1
       i + 1
     EndIf
   Wend
-  ProcedureReturn out$
+  ProcedureReturn Left(out$, written)
 EndProcedure
 
 ; First keyword of a stripped line, lowercased (keywords are case-insensitive;
 ; first-word matching keeps ProcedureReturn from entering procedure depth).
 Procedure.s BpFirstWord(Strip$)
-  Protected t$ = LCase(Trim(Strip$))
-  Protected out$ = "", i.i, n.i = Len(t$), c$
+  Protected t$ = LCase(TrimAll(Strip$))
+  Protected i.i, n.i = Len(t$), c$
   For i = 1 To n
-    c$ = Mid(t$, i, 1)
-    If (c$ >= "a" And c$ <= "z") Or (c$ >= "0" And c$ <= "9") Or c$ = "_"
-      out$ + c$
-    Else
+    c$ = PeekS(@t$ + (i - 1) * SizeOf(Character), 1, #PB_Unicode)
+    If (c$ < "a" Or c$ > "z") And (c$ < "0" Or c$ > "9") And c$ <> "_"
       Break
     EndIf
   Next
-  ProcedureReturn out$
+  ProcedureReturn Left(t$, i - 1)
 EndProcedure
 
 ; BpScan: collect the notes. Line-anchored notes first (source order), the
@@ -1254,12 +1246,17 @@ Procedure BpScan(SourceText$, List Notes$())
   ClearList(Notes$())
   If SourceText$ = "" : ProcedureReturn : EndIf
   Protected norm$ = ReplaceString(SourceText$, Chr(13) + Chr(10), Chr(10))
-  Protected nLines.i = CountString(norm$, Chr(10)) + 1
+  norm$ = ReplaceString(norm$, Chr(13), Chr(10))
+  Protected length.i = Len(norm$)
   Protected explicitSeen.i = #False, inProc.i = #False
   Protected globalLine.i = 0, gotoLine.i = 0
-  Protected i.i, s$, w$
-  For i = 1 To nLines
-    s$ = BpStripLine(StringField(norm$, i, Chr(10)))
+  Protected i.i = 0, start.i = 0, nextLine.i = 0, s$, w$
+  Repeat
+    While nextLine < length And PeekU(@norm$ + nextLine * SizeOf(Character)) <> 10
+      nextLine + 1
+    Wend
+    i + 1
+    s$ = BpStripLine(PeekS(@norm$ + start * SizeOf(Character), nextLine - start, #PB_Unicode))
     w$ = BpFirstWord(s$)
     If w$ = "global" And inProc And globalLine = 0 : globalLine = i : EndIf
     If (w$ = "goto" Or w$ = "gosub") And gotoLine = 0 : gotoLine = i : EndIf
@@ -1273,7 +1270,9 @@ Procedure BpScan(SourceText$, List Notes$())
     ElseIf w$ = "procedure"
       inProc = #True
     EndIf
-  Next
+    start = nextLine + 1
+    nextLine = start
+  Until start >= length
   If globalLine > 0
     AddElement(Notes$())
     Notes$() = "Line " + Str(globalLine) + ": `Global` inside a procedure creates hidden shared state — declare globals at file scope."
@@ -1294,11 +1293,9 @@ EndProcedure
 
 ; Line-less errors (POLINK etc.) print as "Line 0: msg" verbatim - the
 ; golden sessions pin those bytes, so no beautification here.
-Procedure.s FormatCheckResult(DurationMs.i, LineCount.i, Ok.i, TimedOut.i, List Errors.DiagT(), RawTail$, File$, SourceText$, List Buckets$())
+Procedure.s FormatCheckResult(StartMs.i, LineCount.i, Ok.i, TimedOut.i, List Errors.DiagT(), RawTail$, File$, SourceText$, List Buckets$())
   Protected out$ = ""
-  If Ok
-    out$ = "OK — " + Str(LineCount) + " lines, " + Str(DurationMs) + " ms (" + File$ + ")"
-  Else
+  If Not Ok
     If TimedOut
       out$ = "COMPILER TIMEOUT after " + Str(#CHECK_TIMEOUT_MS) + " ms (" + File$ + ")"
     Else
@@ -1343,6 +1340,9 @@ Procedure.s FormatCheckResult(DurationMs.i, LineCount.i, Ok.i, TimedOut.i, List 
       Next
     EndIf
   EndIf
+  If Ok
+    out$ = "OK — " + Str(LineCount) + " lines, " + Str(ElapsedMilliseconds() - StartMs) + " ms (" + File$ + ")" + out$
+  EndIf
   ProcedureReturn CapText(out$, #CHECK_CAP)
 EndProcedure
 
@@ -1352,7 +1352,6 @@ EndProcedure
 Structure CheckResT
   ok.i
   lineCount.i
-  durationMs.i
   timedOut.i
   rawTail.s
   sourceText.s
@@ -1365,7 +1364,6 @@ Procedure RunCheck(CompilerExe$, AbsFile$, ProjectRoot$, *c.CheckResT)
   ClearList(*c\errors())
   *c\ok = #False
   *c\lineCount = 0
-  *c\durationMs = 0
   *c\timedOut = #False
   *c\rawTail = ""
   *c\sourceText = ""
@@ -1383,12 +1381,11 @@ Procedure RunCheck(CompilerExe$, AbsFile$, ProjectRoot$, *c.CheckResT)
   EndIf
 
   Protected proc.RunResT
-  CompilerStepWithRetry(CompilerExe$, #SW_CHECK$, copy\file, "", @proc)
-  CleanupTempDir(copy\dir)
+  CompilerStepWithRetry(CompilerExe$, #SW_CHECK$, copyile, PathJoin(copydir, "check" + #ExeSuffix$), GetPathPart(copyile), @proc)
+  CleanupTempDir(copydir)
 
   NewList warningsLocal.DiagT()
   ParseDiagnostics(proc\stdout, *c\errors(), warningsLocal())
-  *c\durationMs = proc\durationMs
   *c\timedOut = proc\timedOut
   *c\ok = Bool(proc\spawnFailed = #False And proc\exitCode = 0 And proc\timedOut = #False And ListSize(*c\errors()) = 0)
 
@@ -1413,6 +1410,7 @@ Procedure RunCheck(CompilerExe$, AbsFile$, ProjectRoot$, *c.CheckResT)
 EndProcedure
 
 Procedure ToolCheck(IdValue.i, Args.i)
+  Protected startMs.i = ElapsedMilliseconds()
   Protected compiler$ = ConfigCompiler()
   If compiler$ = ""
     SendTextResult(IdValue, "PureBasic compiler not found. Install PureBasic (or set PUREBASIC_HOME to its install dir) and restart the server.", #True)
@@ -1455,7 +1453,6 @@ Procedure ToolCheck(IdValue.i, Args.i)
   NewList buckets$()
   ForEach res\errors() : AddElement(msgs$()) : msgs$() = res\errors()\message : Next
   MetricsClassifyBuckets(msgs$(), buckets$())
-  MetricsAppend("pb_check", abs$, okBuckets, ListSize(msgs$()), buckets$(), res\durationMs)
 
   ; source text feeds the hints + best-practice scan: RunCheck already read
   ; and decoded it - reuse it under the same sane-size guard instead of a
@@ -1465,5 +1462,7 @@ Procedure ToolCheck(IdValue.i, Args.i)
     sourceText$ = res\sourceText
   EndIf
 
-  SendTextResult(IdValue, FormatCheckResult(res\durationMs, res\lineCount, res\ok, res\timedOut, res\errors(), res\rawTail, fileArg$, sourceText$, buckets$()), Bool(Not res\ok))
+  Protected output$ = FormatCheckResult(startMs, res\lineCount, res\ok, res\timedOut, res\errors(), res\rawTail, fileArg$, sourceText$, buckets$())
+  MetricsAppend("pb_check", abs$, okBuckets, ListSize(msgs$()), buckets$(), ElapsedMilliseconds() - startMs)
+  SendTextResult(IdValue, output$, Bool(Not res\ok))
 EndProcedure

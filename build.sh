@@ -3,16 +3,12 @@
 # build.sh - one-command build for pbmcp (PureBasic 6.x x64, Linux).
 #
 # Usage:  build.sh          lint + compile pbmcp
-#         build.sh check    --check on the real tree (authoritative syntax
-#                           check; the switch form is the Linux one:
+#         build.sh check    thread-safe --check on the complete source tree
+#                           (the switch form is the Linux one:
 #                           /SWITCH switches do not exist here)
 #
-# Mirrors build.cmd (Windows). The ONE deliberate behavioral difference:
-# the Linux compile passes --thread - REQUIRED. The non-TS runtime
-# heap-corrupts (SIGSEGV / free(): invalid size) when the docs-index
-# preload thread runs LoadJSON concurrently with main-thread runtime use;
-# measured live, see PORTING-LINUX.md Phase 2 execution record. The
-# Windows build stays non-TS (proven green).
+# Both builds require thread safety: documentation preload uses the runtime
+# concurrently with request handling (--thread here, /THREAD on Windows).
 #
 # Compiler discovery mirrors the server's own ConfigInit() Linux chain:
 # PUREBASIC_HOME > ~/purebasic > /opt/purebasic > /usr/local/purebasic >
@@ -28,9 +24,9 @@ if [ -n "${PUREBASIC_HOME:-}" ] && [ -x "${PUREBASIC_HOME%/}/compilers/pbcompile
   PBC="${PUREBASIC_HOME%/}/compilers/pbcompiler"
 fi
 if [ -z "$PBC" ]; then
-  for home in "$HOME/purebasic" /opt/purebasic /usr/local/purebasic; do
-    if [ -x "$home/compilers/pbcompiler" ]; then
-      PBC="$home/compilers/pbcompiler"
+  for pb_home in "$HOME/purebasic" /opt/purebasic /usr/local/purebasic; do
+    if [ -x "$pb_home/compilers/pbcompiler" ]; then
+      PBC="$pb_home/compilers/pbcompiler"
       break
     fi
   done
@@ -56,7 +52,12 @@ if [ -n "${PBMCP_OUT:-}" ]; then OUT="$PBMCP_OUT"; else OUT="$(pwd)/pbmcp"; fi
 
 if [ "${1:-}" = "check" ]; then
   echo "build.sh: --check on \"$SRC\""
-  exec "$PBC" --check --console "$SRC"
+  exec "$PBC" --thread --check --console "$SRC"
+fi
+
+if ! node tools/build-local-index.mjs --compiler "$PBC" --out src/pbdocs-index.json; then
+  echo "build.sh: local help indexing FAILED - Node.js and matching installed help are required"
+  exit 1
 fi
 
 echo "build.sh: compiling \"$SRC\" (--thread: required on Linux, see header)"

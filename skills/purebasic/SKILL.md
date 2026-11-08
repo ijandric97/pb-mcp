@@ -1,15 +1,18 @@
 ---
 name: purebasic
-description: PureBasic 6.40 coding conventions with MCP documentation, compilation, and console testing. Use when writing, editing, or debugging .pb or .pbi source — prevents VB/FreeBASIC syntax hallucinations and guides declarations, events, flags, resource cleanup, and verification.
+description: PureBasic coding conventions with MCP documentation, compilation, and console testing. Use when writing, editing, or debugging .pb or .pbi source — prevents VB/FreeBASIC syntax hallucinations and guides declarations, events, flags, resource cleanup, and verification.
 ---
 
-# PureBasic conventions (6.40)
+# PureBasic conventions
 
-Write PureBasic, not Visual Basic, not FreeBASIC. Target PureBasic 6.40.
-When version compatibility matters, confirm the compiler and documentation
-index with `pb_version`; do not assume they match the target.
-Before writing PureBasic, use `pb_docs_search` to locate real commands.
-Before any unfamiliar call, confirm exact syntax and flags with `pb_command`.
+Write PureBasic, not Visual Basic, not FreeBASIC. Use the project's explicit
+target version, or the installed compiler when none is specified. Confirm the
+compiler and documentation index with `pb_version`; investigate a mismatch
+before using version-specific APIs. Source builds index the selected compiler's
+local help automatically; rebuild after changing the installation.
+Use `pb_command` directly when a command name is known; use `pb_docs_search`
+to discover names. Confirm unfamiliar syntax and flags, and reuse documentation
+already retrieved in the current session instead of repeating lookups.
 Run `pb_check` after each coherent edit batch, before execution or delivery;
 check earlier when a risky change needs isolation. Tool instructions take
 precedence over batching shortcuts. Compilation does not prove runtime behavior.
@@ -21,9 +24,9 @@ docs-only; compiler tools require explicit opt-in on a trusted isolated host.
 The HTTP endpoint requires bearer credentials and remains loopback-only behind
 an HTTPS gateway. See the repository's `INSTALL.md` for deployment details.
 
-MCP is the primary workflow: command search → exact documentation → compilation
-→ noninteractive console tests where applicable. For reference-page lookup,
-relative-include staging, safe execution, and unavailable-tool handling,
+MCP is the primary workflow: look up uncertain APIs → implement a coherent
+change → compilation → noninteractive console tests where applicable. For
+reference-page lookup, compilation, safe execution, and unavailable-tool handling,
 read [`references/tooling.md`](references/tooling.md) when relevant.
 The tested scope, array-read, and parsing cases are recorded in
 [`references/verification.md`](references/verification.md); other guidance is
@@ -31,7 +34,8 @@ not a blanket claim of compiler-tested coverage.
 For module organization, console I/O, files and encoding, memory management,
 threads, databases, GUI lifetimes, and release verification, read the matching
 section of [`references/best-practices.md`](references/best-practices.md)
-before writing code — load only the sections the task needs.
+when the relevant rules are unfamiliar or a risky change needs verification.
+Load only needed sections and reuse guidance already read in this session.
 
 ## PureBasic is not Visual Basic
 

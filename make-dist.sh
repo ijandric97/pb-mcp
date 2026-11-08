@@ -38,13 +38,7 @@ fi
 echo "make-dist: copying docs + skill"
 cp README.md dist/ || fail
 cp INSTALL.md dist/ || fail
-idx=$(ls -t index-*.json 2>/dev/null | head -n 1)
-if [ -n "$idx" ]; then
-  echo "make-dist: docs index drop-in - $idx"
-  cp "$idx" dist/ || fail
-else
-  echo "make-dist: no index-*.json at repo root - binary falls back to the embedded placeholder"
-fi
+cp src/pbdocs-index.json dist/index.json || fail
 echo "make-dist: copying complete skill tree (SKILL.md + references/)"
 cp -R skills/purebasic/. dist/skills/purebasic/ || fail
 

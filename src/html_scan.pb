@@ -693,21 +693,58 @@ Procedure ScanCommandPage(Path$, Library$, RelFile$)
   n = Lof(f)
   *buffer = AllocateMemory(n + 1)
   If *buffer = 0
-    ConsoleError("pbmcp: cannot allocate " + Str(n + 1) + " bytes for: " + Path$)
     CloseFile(f)
+    ConsoleError("pbmcp: cannot allocate HTML buffer: " + Path$)
     End 1
   EndIf
-  got = 0
-  If n > 0 : got = ReadData(f, *buffer, n) : EndIf
+  Protected bytes.i = 0
+  If n > 0 : bytes = ReadData(f, *buffer, n) : EndIf
   CloseFile(f)
-  If got <> n   ; short read: do not decode n bytes of a partial buffer
-    ConsoleError("pbmcp: short read on HTML file: " + Path$)
+  If bytes <> n
+    FreeMemory(*buffer)
+    ConsoleError("pbmcp: cannot read complete HTML file: " + Path$)
     End 1
   EndIf
   gHtmlSource$ = PeekS(*buffer, n, #PB_UTF8 | #PB_ByteLength)
   FreeMemory(*buffer)
   HtmlParseTree(gHtmlSource$)
   WriteLine(HtmlCommandJson(Library$, RelFile$))
+EndProcedure
+
+; One unchanged command JSON line per manifest entry, in input order.
+Procedure RunScanBatchMode()
+  Protected path$ = ProgramParameter(1)
+  If JsonHasNul(ReadSourceWhole(path$))
+    ConsoleError("pbmcp: scanner manifest cannot contain NUL strings")
+    End 1
+  EndIf
+  Protected json.i = LoadJSON(#PB_Any, path$)
+  If json = 0
+    ConsoleError("pbmcp: cannot load scanner manifest: " + path$ + " - " + JSONErrorMessage())
+    End 1
+  EndIf
+  Protected entries.i = JSONValue(json), entry.i, i.i, file$, library$, relfile$
+  If JSONType(entries) <> #PB_JSON_Array
+    ConsoleError("pbmcp: scanner manifest must be an array")
+    FreeJSON(json)
+    End 1
+  EndIf
+  For i = 0 To JSONArraySize(entries) - 1
+    entry = GetJSONElement(entries, i)
+    file$ = "" : library$ = "" : relfile$ = ""
+    If JSONType(entry) = #PB_JSON_Object
+      file$ = MemberStr(entry, "path", "")
+      library$ = MemberStr(entry, "library", "")
+      relfile$ = MemberStr(entry, "file", "")
+    EndIf
+    If file$ = "" Or library$ = "" Or relfile$ = ""
+      ConsoleError("pbmcp: scanner entry " + Str(i) + " requires non-empty path, library, and file strings")
+      FreeJSON(json)
+      End 1
+    EndIf
+    ScanCommandPage(file$, library$, relfile$)
+  Next
+  FreeJSON(json)
 EndProcedure
 
 Procedure RunScanMode()

@@ -1,11 +1,10 @@
 @echo off
 setlocal
 rem ---------------------------------------------------------------------------
-rem build.cmd - one-command build for pbmcp.exe (PureBasic 6.40 x64).
+rem build.cmd - build with the installed PureBasic compiler and matching help.
 rem
 rem Usage:  build.cmd         lint + compile pbmcp.exe
-rem         build.cmd check   6.40 /CHECK on the real tree (authoritative
-rem                           syntax check)
+rem         build.cmd check   thread-safe /CHECK on the complete source tree
 rem
 rem Paths are absolute (%~dp0); no shell mangling possible under cmd.exe.
 rem MSYS2_ARG_CONV_EXCL additionally guards /SWITCH args when this script is
@@ -16,9 +15,12 @@ set "MSYS2_ARG_CONV_EXCL=*"
 set "PBC="
 if defined PUREBASIC_HOME if exist "%PUREBASIC_HOME%Compilers\pbcompiler.exe" set "PBC=%PUREBASIC_HOME%Compilers\pbcompiler.exe"
 if not defined PBC if defined PUREBASIC_HOME if exist "%PUREBASIC_HOME%\Compilers\pbcompiler.exe" set "PBC=%PUREBASIC_HOME%\Compilers\pbcompiler.exe"
+if not defined PBC if exist "%ProgramFiles(x86)%\PureBasic\Compilers\pbcompiler.exe" set "PBC=%ProgramFiles(x86)%\PureBasic\Compilers\pbcompiler.exe"
+if not defined PBC if exist "%ProgramFiles%\PureBasic\Compilers\pbcompiler.exe" set "PBC=%ProgramFiles%\PureBasic\Compilers\pbcompiler.exe"
+if not defined PBC if exist "C:\PureBasic\Compilers\pbcompiler.exe" set "PBC=C:\PureBasic\Compilers\pbcompiler.exe"
 if not defined PBC if exist "%LOCALAPPDATA%\Programs\PureBasic\Compilers\pbcompiler.exe" set "PBC=%LOCALAPPDATA%\Programs\PureBasic\Compilers\pbcompiler.exe"
 if not defined PBC (
-    echo build.cmd: pbcompiler.exe not found - set PUREBASIC_HOME or install PB 6.40 under %%LOCALAPPDATA%%\Programs\PureBasic
+    echo build.cmd: pbcompiler.exe not found - set PUREBASIC_HOME to the PureBasic installation
     exit /b 1
 )
 
@@ -36,13 +38,18 @@ if defined PBMCP_OUT (set "OUT=%PBMCP_OUT%") else set "OUT=%~dp0pbmcp.exe"
 
 if /i not "%~1"=="check" goto compile
 
-echo build.cmd: 6.40 /CHECK on "%SRC%"
-"%PBC%" /CHECK "%SRC%"
+echo build.cmd: /CHECK on "%SRC%"
+"%PBC%" /THREAD /CHECK "%SRC%"
 exit /b %errorlevel%
 
 :compile
+node "%~dp0tools\build-local-index.mjs" --compiler "%PBC%" --out "%~dp0src\pbdocs-index.json"
+if errorlevel 1 (
+    echo build.cmd: local help indexing FAILED - Node.js and matching installed help are required
+    exit /b 1
+)
 echo build.cmd: compiling "%SRC%"
-"%PBC%" /CONSOLE "%SRC%" /EXE "%OUT%"
+"%PBC%" /THREAD /CONSOLE "%SRC%" /EXE "%OUT%"
 if errorlevel 1 (
     echo build.cmd: compile FAILED
     exit /b 1

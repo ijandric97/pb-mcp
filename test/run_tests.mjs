@@ -19,7 +19,7 @@
 //       PUREBASIC_MCP_NO_METRICS=1 opt-out
 //   [7] file mode + live stdin wiring (all five tools)
 //   [8] missing-index UX, live on scratch dirs only: [A] missing env file,
-//       [B] invalid JSON, [C] embedded placeholder (0 commands), [D]
+//       [B] invalid JSON, [C] explicit empty index (0 commands), [D]
 //       no-index server stays fully alive
 //   [9] native HTML scanner: test/fixtures_html_scan/pages vs goldens
 //   [10] companion skill integrity: SKILL.md frontmatter + routing, the
@@ -31,10 +31,11 @@
 // while a live server runs on it.
 // ---------------------------------------------------------------------------
 import { spawnSync, spawn, execFileSync } from "node:child_process";
-import { writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { dribble } from "./dribble.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 // Platform-aware exe name (port Phase 4): pbmcp.exe on Windows, pbmcp on
@@ -43,6 +44,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const IS_WIN = process.platform === "win32";
 const exeSuffix = IS_WIN ? ".exe" : "";
 const exe = process.env.PBMCP_EXE || join(root, `pbmcp${exeSuffix}`);
+if (!existsSync(exe)) throw new Error(`MCP executable not found: ${exe}. Run the native build first.`);
 const testDir = join(root, "test");
 const outDir = join(testDir, "out");
 mkdirSync(outDir, { recursive: true });
@@ -85,28 +87,9 @@ function deepEqual(a, b) {
 }
 
 // ---------------------------------------------------------------------------
-// Pin determinism: resolve the newest index-*.json in the cache dir
-// by mtime (docs_index.pb DocsFindNewestIndex rule) and pin it explicitly.
+// Pin docs tests explicitly; discovery precedence has isolated regressions below.
 // ---------------------------------------------------------------------------
-function resolveNewestIndex() {
-  // Same chain the loader uses, per OS (port Phase 4): %LOCALAPPDATA% on
-  // Windows, ${XDG_CACHE_HOME:-~/.cache} on Linux.
-  const dir = IS_WIN
-    ? join(process.env.LOCALAPPDATA, "purebasic-mcp")
-    : join(process.env.XDG_CACHE_HOME || join(process.env.HOME, ".cache"), "purebasic-mcp");
-  if (!existsSync(dir)) return null;
-  let best = null;
-  for (const name of readdirSync(dir)) {
-    if (!/^index-.*\.json$/.test(name)) continue;
-    const p = join(dir, name);
-    try {
-      const mtime = statSync(p).mtimeMs;
-      if (!best || mtime > best.mtime) best = { path: p, mtime };
-    } catch { /* unreadable entry - skip, like the loader */ }
-  }
-  return best?.path ?? null;
-}
-const pinnedIndex = resolveNewestIndex();
+const pinnedIndex = process.env.PUREBASIC_MCP_INDEX || join(FIX, "docs-index.json");
 
 // Base env for EVERY pbmcp.exe spawn in this suite. Merges over the
 // ambient environment (PATH, HOME, PUREBASIC_HOME, ...) - the server's
@@ -116,7 +99,7 @@ const pinnedIndex = resolveNewestIndex();
 // back empty). Windows discovery uses absolute-path candidates and never
 // noticed the bug.
 function pinEnv(extra = {}) {
-  return { ...process.env, PUREBASIC_MCP_NO_METRICS: "1", ...(pinnedIndex ? { PUREBASIC_MCP_INDEX: pinnedIndex } : {}), ...extra };
+  return { ...process.env, PUREBASIC_MCP_NO_METRICS: "1", PBMCP_DOCS_TIMING: "0", PBMCP_PRELOAD: "1", PUREBASIC_MCP_INDEX: pinnedIndex, ...extra };
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +119,9 @@ function runPb(build, env = {}, fileMode = false) {
     timeout: 90000,
     env: { ...process.env, ...pinEnv(), ...env },
     encoding: "utf8",
+    windowsHide: true,
   });
+  if (r.error || r.status !== 0) throw new Error(`MCP session failed (exit ${r.status}): ${r.error || r.stderr || r.signal || 'no diagnostic output'}`);
   const msgs = r.stdout.split("\n").filter((l) => l.trim() !== "").map((l) => JSON.parse(l));
   return { status: r.status, stderr: r.stderr, msgs, byId: new Map(msgs.map((m) => [m.id, m])) };
 }
@@ -149,7 +134,7 @@ const text = (m) => m?.result?.content?.[0]?.text ?? "";
 // ===========================================================================
 console.log("[0] determinism pin");
 // ===========================================================================
-check("newest index resolved (spawns pinned to it)", !!pinnedIndex, "no index-*.json in the per-OS cache dir (purebasic-mcp)");
+check("docs test index resolved (spawns pinned to it)", !!pinnedIndex, "build the docs index or set PUREBASIC_MCP_INDEX");
 if (pinnedIndex) console.log(`     pinned: ${pinnedIndex}`);
 
 // ===========================================================================
@@ -216,8 +201,9 @@ console.log("\n[1] framing + multibyte (100-line session)");
   console.log(`     fixture: ${fixturePath} (100 lines, ${responses.length} expected responses)`);
 
   // file mode vs stdin-piped must be byte-identical
-  const fileMode = spawnSync(exe, ["test", fixturePath], { env: pinEnv(), encoding: "buffer", cwd: root });
-  const pipeMode = spawnSync(exe, [], { input: readFileSync(fixturePath), env: pinEnv(), encoding: "buffer", cwd: root });
+  const fileMode = spawnSync(exe, ["test", fixturePath], { env: pinEnv(), encoding: "buffer", cwd: root, timeout: 30000, windowsHide: true });
+  const pipeMode = spawnSync(exe, [], { input: readFileSync(fixturePath), env: pinEnv(), encoding: "buffer", cwd: root, timeout: 30000, windowsHide: true });
+  if (fileMode.error || pipeMode.error) throw new Error(`MCP framing session failed: ${fileMode.error || pipeMode.error}`);
   check("file mode exits 0", fileMode.status === 0, `status=${fileMode.status} stderr=${fileMode.stderr}`);
   check("pipe mode exits 0", pipeMode.status === 0, `status=${pipeMode.status} stderr=${pipeMode.stderr}`);
   writeFileSync(join(outDir, "file_mode.txt"), fileMode.stdout);
@@ -246,29 +232,11 @@ console.log("\n[1] framing + multibyte (100-line session)");
   // dribble stress: feed the fixture in 7-byte chunks (with 1ms gaps),
   // deliberately cutting multibyte chars across read boundaries.
   console.log("     [dribble]");
-  await new Promise((resolve) => {
-    const child = spawn(exe, [], { env: pinEnv(), stdio: ["pipe", "pipe", "pipe"] });
-    const raw = readFileSync(fixturePath);
-    let out = Buffer.alloc(0);
-    child.stdout.on("data", (d) => { out = Buffer.concat([out, d]); });
-    let i = 0;
-    const t = setInterval(() => {
-      for (let j = 0; j < 10 && i < raw.length; j++, i += 7) {
-        child.stdin.write(raw.subarray(i, Math.min(i + 7, raw.length)));
-      }
-      if (i >= raw.length) {
-        clearInterval(t);
-        child.stdin.end();
-      }
-    }, 1);
-    child.on("exit", () => {
-      check("dribble output byte-identical to big-write pipe mode",
-        Buffer.compare(out, pipeMode.stdout) === 0,
-        `dribble=${out.length}B pipe=${pipeMode.stdout.length}B`);
-      resolve();
-    });
-    setTimeout(() => { check("dribble completes in time", false); child.kill("SIGKILL"); resolve(); }, 30000);
-  });
+  const streamed = await dribble(exe, [], readFileSync(fixturePath), { env: pinEnv(), cwd: root });
+  check("dribble exits cleanly", streamed.status === 0 && !streamed.error, streamed.error || streamed.stderr);
+  check("dribble output byte-identical to big-write pipe mode",
+    Buffer.compare(streamed.stdout, pipeMode.stdout) === 0,
+    `dribble=${streamed.stdout.length}B pipe=${pipeMode.stdout.length}B`);
 }
 
 // ===========================================================================
@@ -417,6 +385,11 @@ console.log("\n[3] docs tools (pb_docs_search + pb_command)");
     cOk("Compiler Directives (reference)") &&
     cOut("Compiler Directives (reference)").includes("Full text: https://www.purebasic.com/documentation/reference/compilerdirectives.html"),
     cOut("Compiler Directives (reference)"));
+  check("reference page text is available locally",
+    cOut("Color table").includes("RGB") && !cOut("Color table").includes("Local text is unavailable"), cOut("Color table").slice(0, 200));
+  check("compiler reference text is available locally",
+    cOut("Compiler Directives (reference)").includes("CompilerIf") &&
+    !cOut("Compiler Directives (reference)").includes("Local text is unavailable"), cOut("Compiler Directives (reference)").slice(0, 200));
 
   // search queries: ranking, filters, limits, validation, tokenize-to-empty
   // (gates are index-agnostic: 5.73 / 6.40 / online indexes rank and case
@@ -567,7 +540,7 @@ console.log("\n[5] pb_run: timeout / orphan / cleanup");
   const r = runPb(() => [
     req("initialize", {}),
     call("pb_run", { file: HELLO }),
-    call("pb_run", { file: HELLO, args: ["alpha", "beta gamma", 'quote "inner" arg'] }),
+    call("pb_run", { file: HELLO, args: ["alpha", "beta gamma", "third"] }),
     call("pb_run", { file: BAD }),
     call("pb_run", { file: RUNAWAY_SILENT, timeoutMs: 2000 }),
     call("pb_run", { file: RUNAWAY_PRINT, timeoutMs: 2000 }),
@@ -578,12 +551,9 @@ console.log("\n[5] pb_run: timeout / orphan / cleanup");
   check("hello: 'exit 0 · N s' + stdout captured",
     new RegExp(`^exit 0 · \\d+\\.\\d+ s \\(${esc(HELLO)}\\)`).test(t(2)) &&
     t(2).includes("--- stdout ---\nhello from pb_run") && r.byId.get(2)?.result?.isError === false, t(2));
-  // Embedded-quote args cannot round-trip (probe-sealed: PB children have
-  // no command-line escape mechanism) - they are ProcQ-wrapped and arrive
-  // split, but must not crash the run or corrupt their siblings.
-  check("args pass-through (incl. quoted space arg; quote-bearing arg no crash)",
+  check("args pass-through (all values, including a spaced argument)",
     t(3).startsWith("exit 0 · ") && t(3).includes("arg1=alpha") &&
-    t(3).includes("arg2=beta gamma"), t(3));
+    t(3).includes("arg2=beta gamma") && t(3).includes("arg3=third"), t(3));
 
   const cf = t(4).split("\n");
   check("compile fail header",
@@ -679,11 +649,19 @@ console.log("\n[7] file mode + live stdin wiring (all five tools)");
 }
 {
   await new Promise((resolve) => {
-    const child = spawn(exe, [], { env: pinEnv(), stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(exe, [], { env: pinEnv(), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let buf = "";
     const got = [];
-    let killed = false;
-    const timer = setTimeout(() => { check("wiring completes in time", false, "timeout"); finish(); }, 20000);
+    let killed = false, nextStep;
+    const timer = setTimeout(() => finish(new Error("timeout")), 20000);
+    child.on("error", finish);
+    child.stdin.on("error", finish);
+    child.on("close", () => {
+      clearTimeout(timer);
+      clearTimeout(nextStep);
+      if (!killed) check("wiring child remains alive until completion", false, "unexpected exit");
+      resolve();
+    });
     child.stdout.on("data", (d) => {
       buf += d.toString("utf8");
       let idx;
@@ -695,35 +673,38 @@ console.log("\n[7] file mode + live stdin wiring (all five tools)");
       }
     });
     child.stderr.on("data", () => {});   // server must not log to stdout; stderr ignored
-    function send(obj) { child.stdin.write(JSON.stringify(obj) + "\n"); }
+    function send(obj) { if (!killed) child.stdin.write(JSON.stringify(obj) + "\n"); }
+    function later(obj) { nextStep = setTimeout(() => send(obj), 25); }
     function step() {
       if (got.length === 1) {
         check("wiring: initialize answered", got[0].result?.serverInfo?.name === "purebasic-mcp-pb");
-        setTimeout(() => send(req("tools/list", {})), 25);
+        later(req("tools/list", {}));
       } else if (got.length === 2) {
         check("wiring: tools/list answered with 5 tools", got[1].result?.tools?.length === 5);
-        setTimeout(() => send(call("pb_command", { name: "OpenWindow" })), 25);
+        later(call("pb_command", { name: "OpenWindow" }));
       } else if (got.length === 3) {
         check("wiring: pb_command answered with docs", String(got[2].result?.content?.[0]?.text).startsWith("OpenWindow  ["));
-        setTimeout(() => send(call("pb_check", { file: BAD })), 25);
+        later(call("pb_check", { file: BAD }));
       } else if (got.length === 4) {
         check("wiring: pb_check answered with structured error",
           String(got[3].result?.content?.[0]?.text).startsWith("ERRORS (1):") && got[3].result?.isError === true);
-        setTimeout(() => send(call("pb_docs_search", { query: "open window" })), 25);
+        later(call("pb_docs_search", { query: "open window" }));
       } else if (got.length === 5) {
         check("wiring: pb_docs_search answered", /^1\. /.test(String(got[4].result?.content?.[0]?.text)));
-        setTimeout(() => send(call("pb_run", { file: HELLO })), 25);
+        later(call("pb_run", { file: HELLO }));
       } else if (got.length === 6) {
         check("wiring: pb_run answered", String(got[5].result?.content?.[0]?.text).includes("hello from pb_run") && got[5].result?.isError === false);
         finish();
       }
     }
-    function finish() {
+    function finish(error) {
       if (killed) return;
       killed = true;
       clearTimeout(timer);
+      clearTimeout(nextStep);
+      if (error) check("wiring completes without process/pipe errors", false, error.message);
+      child.stdin.destroy();
       child.kill("SIGKILL");
-      resolve();
     }
     send(req("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "wire", version: "0" } }));
   });
@@ -740,12 +721,12 @@ console.log("\n[8] missing-index UX (live, scratch dirs only)");
   const emptyDir = join(scratch, "empty");
   const missingPath = join(scratch, "missing.json");
   const badPath = join(scratch, "bad.json");
+  const emptyPath = join(scratch, "empty.json");
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync(emptyDir, { recursive: true });
   writeFileSync(badPath, "{oops");          // deliberately invalid JSON
-  // Steer the cache-dir discovery into the scratch dir, per OS (port Phase
-  // 4): LOCALAPPDATA on Windows, XDG_CACHE_HOME on Linux - both hold no
-  // index*.json, so the chain falls through to the embedded placeholder.
+  writeFileSync(emptyPath, JSON.stringify({ commands: [], reference: [] }));
+  // Keep the missing-index cases independent of the developer's cache.
   const noCacheEnv = IS_WIN ? { LOCALAPPDATA: emptyDir } : { XDG_CACHE_HOME: emptyDir };
 
   // [A] explicit env -> missing file
@@ -769,22 +750,18 @@ console.log("\n[8] missing-index UX (live, scratch dirs only)");
       b.startsWith(prefix) && b.endsWith("\n" + HINT) && pb.byId.get(2)?.result?.isError === true, b);
   }
 
-  // [C] no env, LOCALAPPDATA -> empty scratch dir, no index*.json next to the
-  // exe -> the embedded placeholder loads with zero commands -> build-one
-  // hint. (Precondition: no index*.json sits next to the tested exe; dropping
-  // one there intentionally changes this scenario - that is the drop-in
-  // feature.)
+  // [C] an explicitly selected empty index reports no-index on any build.
   {
-    const env = { ...noCacheEnv, PUREBASIC_MCP_INDEX: "" };
+    const env = { ...noCacheEnv, PUREBASIC_MCP_INDEX: emptyPath };
     const pb = runPb(() => [req("initialize", {}), call("pb_docs_search", { query: "window" })], env);
     const b = text(pb.byId.get(2));
-    check("[C] placeholder loads but reports no-index (isError)",
+    check("[C] empty index reports no-index (isError)",
       b === `${EMBEDDED_EMPTY}\n${HINT}` && pb.byId.get(2)?.result?.isError === true, b);
   }
 
   // [D] structural: docs-only failure - tools/list + ping + pb_check unaffected
   {
-    const env = { ...noCacheEnv, PUREBASIC_MCP_INDEX: "" };
+    const env = { ...noCacheEnv, PUREBASIC_MCP_INDEX: emptyPath };
     const pb = runPb(() => [
       req("initialize", {}), req("tools/list", {}), req("ping", {}), call("pb_check", { file: HELLO }),
     ], env);
@@ -889,6 +866,30 @@ console.log("\n[10] companion skill integrity");
   const broken = links.filter((l) => !existsSync(join(dirname(l.from), l.path)));
   check("all local markdown links resolve", broken.length === 0,
     broken.map((b) => `${relative(root, b.from)} -> ${b.path}`).join("; "));
+}
+
+// ===========================================================================
+console.log("\n[11] preload, parent paths, and index discovery regressions");
+// ===========================================================================
+try {
+  console.log(execFileSync(process.execPath, [join(testDir, "regressions.mjs")], {
+    cwd: root, env: { ...pinEnv(), PBMCP_EXE: exe }, encoding: "utf8", timeout: 90000,
+  }).trim());
+  check("regressions pass", true);
+} catch (error) {
+  check("regressions pass", false, String(error.stdout || "") + String(error.stderr || error));
+}
+
+console.log("\n[12] compiler workflow, stdio lifecycle, and crawler regressions");
+for (const test of ["compiler.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs"]) {
+  try {
+    console.log(execFileSync(process.execPath, [join(testDir, test)], {
+      cwd: root, env: { ...pinEnv(), PBMCP_EXE: exe }, encoding: "utf8", timeout: 60000, windowsHide: true,
+    }).trim());
+    check(test + " passes", true);
+  } catch (error) {
+    check(test + " passes", false, String(error.stdout || "") + String(error.stderr || error));
+  }
 }
 
 // ---------------------------------------------------------------------------

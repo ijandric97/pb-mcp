@@ -227,20 +227,33 @@ EndProcedure
 ; reference-page formatter (0.3.1)
 ; ---------------------------------------------------------------------------
 
-; The index carries title/id/file/summary only - never the page text - so
-; the answer is the full-text locator plus the one-fetch instruction, not
-; a paraphrase of the page from its title.
+; Aliases share text by file; old indexes retain a source-URL fallback.
 Procedure.s FormatReferenceEntry(Entry.i)
   Protected title$ = MemberStr(Entry, "title", "")
   Protected summary$ = Trim(MemberStr(Entry, "summary", ""))
   Protected out$ = title$ + "  [reference page]"
-  out$ + Chr(10) + Chr(10) + "Full text: " + #DOCS_URL_BASE$ + MemberStr(Entry, "file", "")
-  out$ + Chr(10) + "Reference pages cover language constructs, not library commands - fetch"
-  out$ + Chr(10) + "the URL for the full page (one fetch answers it)."
-  If summary$ <> "" And summary$ <> title$
-    out$ + Chr(10) + Chr(10) + "Summary: " + summary$
+  Protected file$ = MemberStr(Entry, "file", "")
+  Protected text$ = DocsReferenceText(file$)
+  If text$ = ""
+    Protected commandFile$ = GetFilePart(file$)
+    Protected command.i = 0
+    If Len(commandFile$) > 5 And LCase(Right(commandFile$, 5)) = ".html"
+      command = DocsFindCommand(Left(commandFile$, Len(commandFile$) - 5))
+    EndIf
+    If command And LCase(MemberStr(command, "file", "")) = LCase(file$)
+      text$ = FormatCommandEntry(command)
+    EndIf
   EndIf
-  ProcedureReturn out$
+  out$ + Chr(10) + Chr(10) + "Full text: " + #DOCS_URL_BASE$ + file$
+  If text$ <> ""
+    out$ + Chr(10) + Chr(10) + text$
+  Else
+    out$ + Chr(10) + "Local text is unavailable in this index. Rebuild it with tools/build-online-index.mjs or fetch the URL."
+    If summary$ <> "" And summary$ <> title$
+      out$ + Chr(10) + Chr(10) + "Summary: " + summary$
+    EndIf
+  EndIf
+  ProcedureReturn CapText(out$, #COMMAND_CAP)
 EndProcedure
 
 ; ---------------------------------------------------------------------------
@@ -304,9 +317,7 @@ Procedure ToolDocsCommand(IdValue.i, Args.i)
 
   Protected entry.i = DocsFindCommand(name$)
   If entry = 0
-    ; 0.3.1: reference-page titles resolve too - the index stores their
-    ; file path, so the answer is the full-text URL (success result, not
-    ; the unknown-command error).
+    ; Reference titles and aliases resolve to local text with a source URL.
     Protected refEntry.i = DocsFindReference(name$)
     If refEntry <> 0
       SendTextResult(IdValue, FormatReferenceEntry(refEntry), #False)
@@ -374,8 +385,8 @@ Procedure ToolList(IdValue.i)
   ; 1. pb_docs_search
   schema = AddTool(tools, "pb_docs_search", "Search PureBasic docs",
     "Search the PureBasic command reference. Returns command names, library, and one-line summaries. " +
-    "Use before writing any PureBasic code to find real function names; follow up with pb_command for full syntax. " +
-    "PureBasic is not Visual Basic — command and constant names differ from VB/FreeBASIC; search before writing any unfamiliar call.",
+    "Use to discover command names; when the name is known, use pb_command directly. " +
+    "Reuse documentation already retrieved in this session. PureBasic names and flags differ from Visual Basic and FreeBASIC.",
     #True, -1, -1)
   AddStrProp(GetJSONMember(schema, "properties"), "query", ~"Keywords, e.g. \"open window\", \"string\", \"read file\"", 1, 80)
   AddStrProp(GetJSONMember(schema, "properties"), "library", ~"Filter by library name, e.g. \"Window\", \"String\", \"File\"", 1, 40)
@@ -387,7 +398,8 @@ Procedure ToolList(IdValue.i)
   schema = AddTool(tools, "pb_command", "PureBasic command docs",
     "Full documentation for one PureBasic command: exact syntax, parameters, return value, remarks, example, " +
     "supported OS, related commands. Also resolves reference-page titles (Compiler Directives, Includes, " +
-    "migration guides, UserGuide) to their full-text URL. Always check here before using an unfamiliar command.",
+    "migration guides, UserGuide) to bounded local text and its source URL. Older indexes may need rebuilding for local text. " +
+    "Check unfamiliar syntax and flags here; reuse docs already retrieved in this session.",
     #True, -1, -1)
   AddStrProp(GetJSONMember(schema, "properties"), "name", ~"Exact command name, e.g. \"OpenWindow\" (case-insensitive)", 1, 80)
   AddRequired(schema, "name")
@@ -398,9 +410,9 @@ Procedure ToolList(IdValue.i)
   If Not gHttpMode Or gHttpAllowCompilerTools
   ; 3. pb_check
   schema = AddTool(tools, "pb_check", "Syntax-check PureBasic source",
-    "Syntax-check a PureBasic source file with the real compiler (~350 ms). Returns structured errors with " +
+    "Syntax-check a PureBasic source file with the real compiler. Reports total processing time and structured errors with " +
     "line numbers, high-confidence hints on common beginner errors, and best-practice notes (missing " +
-    "EnableExplicit, Global inside procedures, Goto/Gosub). Run after every edit. The selected project " +
+    "EnableExplicit, Global inside procedures, Goto/Gosub). Check each coherent edit batch before delivery. The selected project " +
     "tree is copied to a bounded temporary workspace and the original files are never modified.",
     #True, #False, -1)
   AddStrProp(GetJSONMember(schema, "properties"), "file", "Path to the .pb source file (absolute, or relative to this server's cwd)", 1, 0)
@@ -418,7 +430,7 @@ Procedure ToolList(IdValue.i)
     #False, #False, #False)
   AddStrProp(GetJSONMember(schema, "properties"), "file", "Path to the .pb source file (absolute, or relative to this server's cwd)", 1, 0)
   AddStrProp(GetJSONMember(schema, "properties"), "projectRoot", "Optional project directory to stage; defaults to the entry file's parent", 1, 0)
-  AddArrayProp(GetJSONMember(schema, "properties"), "args", "Arguments passed verbatim to the compiled program")
+  AddArrayProp(GetJSONMember(schema, "properties"), "args", "Program arguments; double quotes, NUL, and newlines are unsupported and rejected")
   AddIntProp(GetJSONMember(schema, "properties"), "timeoutMs", "Run timeout in ms (default 15000, max 60000)", 1000, 60000)
   AddRequired(schema, "file")
   FinishSchema(schema)

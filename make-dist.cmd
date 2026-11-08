@@ -37,14 +37,7 @@ if errorlevel 1 (
 echo make-dist: copying docs + skill
 copy /y "README.md"                 "dist\" >nul || goto :fail
 copy /y "INSTALL.md"                "dist\" >nul || goto :fail
-set "IDX="
-for /f "delims=" %%f in ('dir /b /o-d "index-*.json" 2^>nul') do if not defined IDX set "IDX=%%f"
-if defined IDX (
-    echo make-dist: docs index drop-in - %IDX%
-    copy /y "%IDX%" "dist\%IDX%" >nul || goto :fail
-) else (
-    echo make-dist: no index-*.json at repo root - binary falls back to the embedded placeholder
-)
+copy /y "src\pbdocs-index.json" "dist\index.json" >nul || goto :fail
 echo make-dist: copying complete skill tree (SKILL.md + references\)
 xcopy /e /i /y "skills\purebasic" "dist\skills\purebasic\" >nul || goto :fail
 

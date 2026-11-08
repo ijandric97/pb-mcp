@@ -12,10 +12,10 @@
 // command pages listed in commandindex.html, so they need no download.
 //
 // Usage: node tools/fetch-online-docs.mjs [mirrorDir] [--base <url>]
-// Writes <mirrorDir>/manifest.json on success. Exits 1 on any page that
-// could not be fetched after retries.
+// Writes <mirrorDir>/manifest.json on success. Reference HTTP 404/410 links
+// are tolerated; all other fetch failures exit 1 after retries.
 // ---------------------------------------------------------------------------
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -26,6 +26,9 @@ for (let i = 0; i < args.length; i++) {
   else mirror = args[i];
 }
 if (!base.endsWith('/')) base += '/';
+
+// A previous successful crawl must not make a failed refresh look complete.
+rmSync(join(mirror, 'manifest.json'), { force: true });
 
 const CONCURRENCY = 6;
 const RETRIES = 3;
@@ -80,6 +83,7 @@ const cmdPages = [...new Set(extractHrefs(cmdHtml, RE_CMD_HREF))];
 const refSet = new Set(extractHrefs(rootHtml, RE_REF_HREF));
 refSet.add('commandindex.html');
 const refCache = new Map(); // name -> body (latin1)
+const failedRefs = [];
 let grew = true;
 while (grew) {
   grew = false;
@@ -87,8 +91,9 @@ while (grew) {
   await pool(todo, async name => {
     try {
       refCache.set(name, await fetchPage(base + 'reference/' + name));
-    } catch {
-      refCache.set(name, null); // dead link: remember, skip when writing
+    } catch (e) {
+      if (/: HTTP (404|410)$/.test(e.message)) refCache.set(name, null); // documented missing-link statuses
+      else { failedRefs.push(e.message); refCache.set(name, null); }
     }
   });
   for (const body of refCache.values()) {
@@ -101,6 +106,11 @@ while (grew) {
       if (!refSet.has(m[1])) { refSet.add(m[1]); grew = true; }
     }
   }
+}
+if (failedRefs.length) {
+  console.error(`FAILED ${failedRefs.length} reference page(s):`);
+  for (const f of failedRefs.slice(0, 20)) console.error('  ' + f);
+  process.exit(1);
 }
 const sortedRef = [...refSet].sort();
 
@@ -130,7 +140,11 @@ if (failed.length) {
   process.exit(1);
 }
 for (const [name, body] of refCache) {
-  if (name === 'commandindex.html' || body === null) continue; // written / dead
+  if (name === 'commandindex.html') continue; // written above
+  if (body === null) {
+    rmSync(join(mirror, 'reference', name), { force: true });
+    continue;
+  }
   writeFileSync(join(mirror, 'reference', name), body);
 }
 const manifest = {

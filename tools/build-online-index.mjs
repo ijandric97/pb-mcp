@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// build-online-index.mjs - build the frozen-schema docs index
-// (schemaVersion 1) from a local documentation tree: the online mirror made
+// build-online-index.mjs - build the docs index (schemaVersion 1, with an
+// optional referenceText map) from a local documentation tree: the online mirror made
 // by fetch-online-docs.mjs, or any other tree with the same layout. Point
 // --out at src/pbdocs-index.json and rebuild to embed the result, or drop
 // it next to pbmcp.exe as index-<version>.json to switch help versions.
 //
 // Parity strategy: command entries are parsed by the shipped, parity-tested
-// binary itself - one `pbmcp(.exe) scan <file> <lib> <lib/file>` per page -
+// binary itself - one `pbmcp(.exe) scan-batch <manifest>` process -
 // so the emitted command JSON is byte-identical to what the former native
 // builder produced. Reference entries, coverage and the assembly are
 // replicated here (ports of the former native builder's stages).
@@ -17,8 +17,9 @@
 //        --pb-version <v> [--source-json '{"kind":"online",...}']
 //        [--manifest <file>] [--pbmcp <exe>]
 // ---------------------------------------------------------------------------
-import { readdirSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readdirSync, readFileSync, mkdirSync, writeFileSync, mkdtempSync, rmSync, rmdirSync } from 'node:fs';
+import { join, dirname, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 
 const ROOT = process.cwd();
@@ -104,6 +105,7 @@ function nodeText(html) {
 // --- discovery (IndexDiscover) ----------------------------------------------
 
 const entries = readdirSync(docsRoot, { withFileTypes: true });
+const referenceDir = entries.find(e => e.isDirectory() && asciiLower(e.name) === 'reference')?.name || 'reference';
 const libraries = [];
 const referenceFiles = [];
 for (const e of entries) {
@@ -133,20 +135,31 @@ libraries.sort((a, b) => {
 
 console.log(`parsing ${libraries.length} libraries...`);
 const cmds = []; // { raw, name, library }
-let done = 0;
+const pages = [];
 for (const lib of libraries) {
   const files = readdirSync(join(docsRoot, lib)).filter(f =>
     asciiLower(f).endsWith('.html') && asciiLower(f) !== 'index.html');
   for (const file of files) {
-    const rel = `${lib}/${file}`;
-    const raw = execFileSync(pbmcp, ['scan', join(docsRoot, lib, file), lib, rel],
-      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).trim();
-    const parsed = JSON.parse(raw); // validation only; raw string is emitted
-    cmds.push({ raw, name: parsed.name, library: parsed.library });
-    done++;
-    if (done % 250 === 0) console.log(`  ${done} command pages`);
+    pages.push({ path: resolve(docsRoot, lib, file), library: lib, file: `${lib}/${file}` });
   }
 }
+const scanDir = mkdtempSync(join(tmpdir(), 'pbmcp-index-'));
+const scanManifest = join(scanDir, 'pages.json');
+try {
+  writeFileSync(scanManifest, JSON.stringify(pages));
+  const output = execFileSync(pbmcp, ['scan-batch', scanManifest],
+    { encoding: 'utf8', maxBuffer: 128 * 1024 * 1024, timeout: 120000, windowsHide: true }).trim();
+  const records = output === '' ? [] : output.split(/\r?\n/);
+  if (records.length !== pages.length) throw new Error(`Scanner returned ${records.length} records for ${pages.length} pages`);
+  for (const raw of records) {
+    const parsed = JSON.parse(raw); // validation only; raw string is emitted
+    cmds.push({ raw, name: parsed.name, library: parsed.library });
+  }
+} finally {
+  rmSync(scanManifest, { force: true });
+  rmdirSync(scanDir);
+}
+console.log(`  ${cmds.length} command pages scanned in one process`);
 // Stable sort: library ci, then name ci, stable.
 cmds.forEach((c, i) => (c.ord = i));
 cmds.sort((A, B) => {
@@ -159,8 +172,22 @@ cmds.sort((A, B) => {
 
 // --- reference entries (IndexReferenceJson) ---------------------------------
 
+function referenceText(html) {
+  const visible = html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(head|script|style|nav|form|footer)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
+  const body = visible.match(/<body\b[^>]*>([\s\S]*?)<\/body\s*>/i)?.[1] ?? visible;
+  return body.split(/(<pre\b[^>]*>[\s\S]*?<\/pre\s*>)/gi).map(part => {
+    if (/^<pre\b/i.test(part)) return trimAll(nodeText(part)).replace(/\r\n?/g, '\n');
+    return cleanText(nodeText(part
+      .replace(/<\/?(?:p|div|blockquote|h[1-6]|li|ul|ol|dl|dt|dd|table|tr)\b[^>]*>/gi, '\n')
+      .replace(/<\/(?:td|th)\s*>/gi, '\t')));
+  }).filter(Boolean).join('\n\n');
+}
+const referenceTexts = {};
 function referenceJson(file) {
-  let html = readFileSync(join(docsRoot, 'reference', file), 'utf8');
+  let html = readFileSync(join(docsRoot, referenceDir, file), 'utf8');
+  referenceTexts[`reference/${file}`] = referenceText(html);
   // IndexTextWithoutBr: <br> tags are stripped before parsing, so they
   // contribute no newline to extracted text (double-space bug otherwise).
   html = html.replace(/<br(?=[\s/>])[^>]*>/gi, '');
@@ -217,7 +244,7 @@ const refs = referenceFiles
 // 2. Reference page titles are plural or group titles ("Enumerations",
 //    "Compiler Directives"), so a bare keyword ("Enumeration", "CompilerIf")
 //    resolves nowhere. Every page's Syntax block marks its real keywords with
-//    color="#3A3966" (placeholders use #924B72, prose lives outside Syntax),
+//    color="#3A3966" online or "#006666" locally (placeholders use #924B72),
 //    giving one alias entry per keyword.
 
 const usedRefKeys = new Set(refs.map(r => asciiLower(r.title)));
@@ -236,7 +263,7 @@ function referenceTarget(href) {
 
 const constRefs = [];
 {
-  const html = readFileSync(join(docsRoot, 'reference', 'pbconstants.html'), 'utf8');
+  const html = readFileSync(join(docsRoot, referenceDir, 'pbconstants.html'), 'utf8');
   const rowRe = /<tr><td[^>]*>[\s\S]*?(#[A-Za-z0-9_]+)(?:<\/font>)?<\/td><td[^>]*>(?:<font[^>]*>)?<a\s[^>]*?href\s*=\s*"?([^">\s]+)"?[^>]*>([\s\S]*?)<\/a>/gi;
   let m;
   while ((m = rowRe.exec(html)) !== null) {
@@ -264,7 +291,7 @@ const constRefs = [];
 const kwRefs = [];
 for (const r of refs) {
   const file = JSON.parse(r.json).file.replace(/^reference\//, '');
-  const html = readFileSync(join(docsRoot, 'reference', file), 'utf8');
+  const html = readFileSync(join(docsRoot, referenceDir, file), 'utf8');
   // Section end = a <b> that is NOT an inline keyword wrap (<b><font ...>):
   // headers like <b>Description</b> terminate; <b><font color=#3A3966>...</font></b>
   // inside the syntax is content. Pages covering several constructs have one
@@ -273,7 +300,7 @@ for (const r of refs) {
   let sm;
   while ((sm = syntaxRe.exec(html)) !== null) {
   const seenKw = new Set();
-  for (const m of sm[1].matchAll(/color="#3A3966">([A-Za-z][A-Za-z0-9_]*)</gi)) {
+  for (const m of sm[1].matchAll(/<b>\s*<font\b[^>]*\bcolor\s*=\s*["']?#(?:3A3966|006666)["']?[^>]*>([A-Za-z][A-Za-z0-9_]*)</gi)) {
     const kw = m[1];
     const key = asciiLower(kw);
     if (seenKw.has(key)) continue;
@@ -293,7 +320,7 @@ console.log(`  ${kwRefs.length} keyword aliases from reference Syntax blocks`);
 
 // --- coverage (IndexCoverage) -----------------------------------------------
 
-const covHtml = readFileSync(join(docsRoot, 'reference', 'commandindex.html'), 'utf8');
+const covHtml = readFileSync(join(docsRoot, referenceDir, 'commandindex.html'), 'utf8');
 const expected = [];
 const seen = new Set();
 const linkRe = /<a\s[^>]*?href\s*=\s*"?\.\.\/[a-z0-9_]+\/[a-z0-9_]+\.html[^>]*>([\s\S]*?)<\/a>/gi;
@@ -316,6 +343,7 @@ for (const name of expected) {
 if (missing > 20) console.log(`  ... and ${missing - 20} more`);
 for (const c of cmds) if (!seen.has(asciiLower(c.name))) extra++;
 console.log(`  expected ${expected.length}, indexed ${cmds.length}, missing ${missing}, extra ${extra}`);
+if (missing > 0) process.exit(1);
 
 // --- emit (RunIndexMode emit order, byte for byte) ---------------------------
 
@@ -336,7 +364,7 @@ out += '},"commands":[';
 out += cmds.map(c => c.raw).join(',');
 out += '],"reference":[';
 out += refs.concat(constRefs, kwRefs).map(r => r.json).join(',');
-out += ']}';
+out += '],"referenceText":' + JSON.stringify(referenceTexts) + '}';
 
 // sanity: must parse
 JSON.parse(out);
@@ -344,5 +372,4 @@ JSON.parse(out);
 mkdirSync(dirname(outFile), { recursive: true });
 writeFileSync(outFile, out);
 console.log(`wrote ${outFile} (${Math.round(Buffer.byteLength(out) / 1024)} KB)`);
-if (missing > 0) process.exit(1);
 console.log('Done.');

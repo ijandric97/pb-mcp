@@ -1,0 +1,527 @@
+{
+  "schemaVersion": 1,
+  "purebasicVersion": "fixture-6.40",
+  "generatedAt": "2026-11-08T00:00:00.000Z",
+  "source": {
+    "kind": "test-fixture",
+    "url": "https://www.purebasic.com/documentation/"
+  },
+  "commands": [
+    {
+      "name": "OpenWindow",
+      "library": "window",
+      "file": "window/openwindow.html",
+      "syntax": [
+        "Result = OpenWindow(#Window, x, y, InnerWidth, InnerHeight, Title$ [, Flags [, ParentID]])"
+      ],
+      "description": "Opens a new window according to the specified parameters. The new window becomes the active window,\nit's not needed to use SetActiveWindow() (unless the window is created as invisible).",
+      "parameters": [
+        {
+          "name": "#Window",
+          "description": "A number to identify the new window.\n#PB_Any can be used to auto-generate this number."
+        },
+        {
+          "name": "x, y",
+          "description": "The initial position of the window, in pixels (unless one of the center flags is used).\nIf 'x' or 'y' is set to #PB_Ignore, the OS will choose a position for the window."
+        },
+        {
+          "name": "InnerWidth, InnerHeight",
+          "description": "The required client area, in pixels (without borders and window decorations)."
+        },
+        {
+          "name": "Title$",
+          "description": "The title of the newly created window."
+        },
+        {
+          "name": "Flags (optional)",
+          "description": "Can be a combination of the following values:\n\n#PB_Window_SystemMenu : Enables the system menu on the window title bar (default).\n#PB_Window_MinimizeGadget: Adds the minimize gadget to the window title bar. #PB_Window_SystemMenu is automatically added.\n#PB_Window_MaximizeGadget: Adds the maximize gadget to the window title bar. #PB_Window_SystemMenu is automatically added.\n(MacOS only: #PB_Window_SizeGadget will be also automatically added).\n#PB_Window_SizeGadget : Adds the sizeable feature to a window.\n#PB_Window_Invisible : Creates the window but don't display.\n#PB_Window_TitleBar : Creates a window with a titlebar.\n#PB_Window_Tool : Creates a window with no taskbar entry.\n#PB_Window_BorderLess : Creates a window without any borders.\n#PB_Window_ScreenCentered: Centers the window in the middle of the screen. x,y parameters are ignored.\n#PB_Window_WindowCentered: Centers the window in the middle of the parent window ('ParentID' parameter must be specified).\nx,y parameters are ignored.\n#PB_Window_Maximize : Opens the window maximized. (Note: on Linux, not all Windowmanagers support this)\n#PB_Window_Minimize : Opens the window minimized.\n#PB_Window_NoGadgets : Prevents the creation of a GadgetList. UseGadgetList() can be used to do this later.\n#PB_Window_NoActivate : Don't activate the window after opening."
+        },
+        {
+          "name": "ParentID (optional)",
+          "description": "The parent window identifier. A valid window identifier can be retrieved with WindowID()."
+        }
+      ],
+      "returnValue": "Nonzero if the window was successfully created, zero otherwise. If #PB_Any was used\nfor the #Window parameter then the generated number is returned on success.",
+      "remarks": "All possible events in a window are handled with the WindowEvent() and WaitWindowEvent() functions.\n\nWindows only: for special situations callbacks are used, see description at SetWindowCallback(). On Windows,\nthe height and width of a window with a titlebar can't be less than around 100 pixels. To open smaller windows, use the\n\"#PB_Window_BorderLess\" flag. On Windows, the #PB_Window_Maximize flag without the maximize gadget will get the full screen size covering the task bar.\n\nImportant: A window should not be opened in a thread, as there is some limitation on OS X and Linux.\nA debugger error will be raised.",
+      "example": "",
+      "os": [
+        "All"
+      ],
+      "seeAlso": [
+        "CloseWindow"
+      ]
+    },
+    {
+      "name": "CloseWindow",
+      "library": "window",
+      "file": "window/closewindow.html",
+      "syntax": [
+        "CloseWindow(#Window)"
+      ],
+      "description": "Close the specified window.",
+      "parameters": [
+        {
+          "name": "#Window",
+          "description": "The window to close. If #PB_All is specified, all the remaining windows are closed."
+        }
+      ],
+      "returnValue": "None.",
+      "remarks": "All remaining opened windows are automatically closed when the program ends.\n\nNote: The following items created for a window are also automatically freed when the window\nis closed: Gadgets, Keyboard shortcuts,\nMenus, StatusBars, Timers,\nToolbars and bound events (with BindEvent()).",
+      "example": "",
+      "os": [
+        "All"
+      ],
+      "seeAlso": [
+        "OpenWindow"
+      ]
+    },
+    {
+      "name": "WindowEvent",
+      "library": "window",
+      "file": "window/windowevent.html",
+      "syntax": [
+        "Event = WindowEvent()"
+      ],
+      "description": "Checks if an event has occurred on any of the opened windows.",
+      "parameters": [],
+      "returnValue": "The next event from the event queue or zero if there are no more events.\nUnlike WaitWindowEvent() it doesn't wait for the next event - it always returns immediately.\nEvent() can be used to get back this value.\n\nThis makes it useful for window event loops, where other processing needs to be done without waiting\nfor an event to happen (e.g. Network transactions) and therefore\nWaitWindowEvent() can't be used.\n\nIt must be handled with care though if used on a continuing basis, because unlike\nWaitWindowEvent(), it will not give CPU time to other programs while waiting\nfor an event and therefore consume all CPU power. In this case, either Delay() should\nbe used somewhere in the loop or WaitWindowEvent() with a small timeout value.\n\nTo get the window number in which the event occurred, use the EventWindow() function.\n\nPossible Events are :\n\n#PB_Event_Menu : a menu has been selected\n#PB_Event_Gadget : a gadget has been pushed\n#PB_Event_SysTray : an icon in the systray zone was clicked\n#PB_Event_Timer : a timer has reached its timeout\n#PB_Event_CloseWindow : the window close gadget has been pushed\n#PB_Event_Repaint : the window content has been destroyed and must be repainted (useful for 2D graphics operations)\n#PB_Event_SizeWindow : the window has been resized\n#PB_Event_MoveWindow : the window has been moved\n#PB_Event_MinimizeWindow : the window has been minimized\n#PB_Event_MaximizeWindow : the window has been maximized\n#PB_Event_RestoreWindow : the window has been restored to normal size (either from a minimum or maximum size)\n#PB_Event_ActivateWindow : the window has been activated (got the focus)\n#PB_Event_DeactivateWindow: the window has been deactivated (lost the focus)\n#PB_Event_WindowDrop : a Drag & Drop operation was finished on a window\n#PB_Event_GadgetDrop : a Drag & Drop operation was finished on a gadget\n#PB_Event_RightClick : a right mouse button click has occurred on the window. This can be useful to display a popup menu\n#PB_Event_LeftClick : a left mouse button click has occurred on the window\n#PB_Event_LeftDoubleClick : a left mouse button double-click has occurred on the window\n\nA basic example for event handling can be found in the WaitWindowEvent() description.",
+      "remarks": "After a #PB_Event_WindowDrop or #PB_Event_GadgetDrop Event, the event functions\nof the Drag & Drop library can be used to examine and read the dropped data.\n\nImportant: The window event loop should not be processed in a thread, as there is some limitation on OS X and Linux.\nA debugger error will be raised.\n\nCorrect way to handle an infinite WindowEvent() loop:\n\nRepeat\nEvent = WindowEvent()\n\nIf Event ; An event was in the queue so process it\n....\nElse\nDelay(1) ; No event, let the others apps get some CPU time too !\nEndIf\nUntil Event = #PB_Event_CloseWindow\n\nImportant: The 'Delay' shouldn't be put after each event, because when lot of events will come\n(like refresh, gadgets updates etc..) the app will wait between each event. So the delay need to be put\nwhen no events are received. Other (recommended) ways is to use WaitWindowEvent() with a small timeout value,\nor setup a timer with AddWindowTimer().\n\nImportant: If you use a FlipBuffers() somewhere in your code, so\nthe 'Delay(1)' is not necessary.",
+      "example": "If OpenWindow(0, 0, 0, 600, 100, \"Position of the mouse on the window: \", #PB_Window_SystemMenu | #PB_Window_ScreenCentered)\n    TextGadget(0, 10, 6, 200, 20, \"\")\n    \n    Repeat\n      Event = WindowEvent()\n      \n      If Event <> 0 ; All events are treated, so we can display the coordinates of the mouse\n        SetWindowTitle(0, \"Position of the mouse on the window: \" + Str(WindowMouseX(0)) + \",\" + Str(WindowMouseX(0))) \n      Else\n      \n      Delay(1) ; Without a FlipBuffers(), Delay() frees the CPU for the multitasking\n      EndIf\n    Until Event = #PB_Event_CloseWindow\n  EndIf\n\nIf OpenWindow(0, 0, 0, 300, 30, \"Position of the mouse on the desktop\", #PB_Window_SystemMenu | #PB_Window_ScreenCentered)\n    TextGadget(0, 10, 6, 200, 20, \"\")\n    \n    Repeat\n      Event = WindowEvent()\n      \n      If Event = 0 ; No more events in the queue, so we can display the coordinates of the mouse\n        SetGadgetText(0, \"Coordinates: \"+Str(DesktopMouseX())+\",\"+Str(DesktopMouseY()))\n      EndIf\n      \n      Delay(20) ;  Without a FlipBuffers(), Delay() frees the CPU for the multitasking\n      \n    Until Event = #PB_Event_CloseWindow\n  EndIf\n\n;Few variables\n  BallX = 400\n  BallY = 200\n  BallSpeedY.f = 5\n  Gravitation.f = 2\n\n  ;Initialization \n  If InitSprite()\n    InitKeyboard()\n    InitMouse()\n  EndIf\n\n  ;Window\n  OpenWindow(0, 0, 0, 800, 600, \"WindowEvent\", #PB_Window_SystemMenu|#PB_Window_ScreenCentered)\n  OpenWindowedScreen(WindowID(0), 0, 0, 800, 600)\n  SetFrameRate(30)\n  \n  ;Ground\n  Ground = CreateSprite(#PB_Any, 800, 30)\n  StartDrawing(SpriteOutput(Ground))\n  Box(0,0,800,30,RGB(128, 0, 0))\n  StopDrawing()\n\n  ;Ball\n  Ball = CreateSprite(#PB_Any, 16, 16)\n  StartDrawing(SpriteOutput(Ball))\n  Box(0,0,16,16,RGB(135, 206, 235))\n  Circle(8,8,8,RGB(255, 255, 0))\n  StopDrawing()\n\n  ;Gauge\n  Image = CreateImage(#PB_Any, 8, 8, 24, RGB(255, 255, 255))\n  *Buffer=EncodeImage(Image ,#PB_ImagePlugin_BMP)\n  Gauge = CatchSprite(#PB_Any, *Buffer)\n\n  \n  ;Main Loop\n  Repeat \n  \n    Repeat\n    ;Window events\n    ;====================================\n    ;Try all possibilities but only one at a time\n    Event = WindowEvent()    ; Animation\n    ;Event = WaitWindowEvent()  ; Blocking animation\n    ;Event = WaitWindowEvent(100) ; Animation but every time an event occurs like moving the mouse for example, \n                                  ; the animation will be suspended for 100 ms\n    Select Event   \n      Case #PB_Event_CloseWindow\n      End\n    EndSelect \n    Until Event=0\n    \n    FlipBuffers() ; ==> With WindowEvent(), FlipBuffers() frees the CPU for the multitasking so Delay(1) is not necessary \n    ClearScreen(RGB(135, 206, 235))\n    \n    ExamineKeyboard() ;Keyboard\n     \n    DisplaySprite(Gauge, 50, 570-BallY) ;Display the gauge\n    ZoomSprite(Gauge,  20, 570)\n     \n    DisplaySprite(Ground, 0, 570) ;Display the ground\n    \n    DisplaySprite(Ball, BallX, BallY) ;Display the ball\n    \n    ;Ball Movement \n    BallSpeedY = BallSpeedY + Gravitation \n    BallY = BallY + BallSpeedY\n    \n    ;Management of the collision of the ball with the ground\n    If SpriteCollision(Ball, BallX, BallY+16, Ground, 0, 570)\n    BallY= 554\n    BallSpeedY = -BallSpeedY\n    EndIf\n    \n  Until KeyboardPushed(#PB_Key_Escape)",
+      "os": [
+        "All"
+      ],
+      "seeAlso": [
+        "WaitWindowEvent",
+        "Event",
+        "EventWindow",
+        "EventGadget",
+        "EventMenu",
+        "EventTimer",
+        "EventData",
+        "EventType",
+        "PostEvent",
+        "BindEvent",
+        "UnbindEvent"
+      ]
+    },
+    {
+      "name": "BindEvent",
+      "library": "window",
+      "file": "window/bindevent.html",
+      "syntax": [
+        "BindEvent(Event, @Callback() [, Window [, Object [, EventType]]])"
+      ],
+      "description": "Bind an event to a callback. It's an additional way to handle events in PureBasic,\nwhich works without problem with the regulars WindowEvent() / WaitWindowEvent()\ncommands. It also allows to have real-time event notifications as\nthe callback can be invoked as soon as the event occurs (useful for\nScrollBarGadget(), live window resize, etc.). An event can be unbound with UnbindEvent().",
+      "parameters": [
+        {
+          "name": "Event",
+          "description": "The event to bind. For a full list of events, see WindowEvent(). Custom\nevents are also supported, when using PostEvent()."
+        },
+        {
+          "name": "@Callback()",
+          "description": "The callback procedure to call when the event occurs. It has to be declared like this:\n\nProcedure EventHandler()\n; Code\nEndProcedure\n\nRegular functions like EventGadget(), EventWindow(), EventMenu(), EventType() and EventData() are\navailable within the callback to get more information about the event.\n\nNote: WindowEvent() and WaitWindowEvent() should never be called from inside the callback\nor the program can be locked or have wrong behavior."
+        },
+        {
+          "name": "Window (optional)",
+          "description": "The #Window number to bind the event to. The event will be dispatched only when occurring on this\nwindow. #PB_All can be specified to bind the event to all windows (if specified, 'Object' and\n'EventType' parameters have to be set to #PB_All as well)."
+        },
+        {
+          "name": "Object (optional)",
+          "description": "The object number to bind the event to. It can be a gadget,\nmenuitem or systray number. #PB_All\ncan be used to bind the event to any objects (if specified, 'EventType' parameter\nhas to be set to #PB_All as well)."
+        },
+        {
+          "name": "EventType (optional)",
+          "description": "The event type to bind the event to. For a full list of supported type, see EventType().\n#PB_All can be used to bind the event to any type."
+        }
+      ],
+      "returnValue": "None.",
+      "remarks": "",
+      "example": "Procedure SizeWindowHandler()\n    Debug \"Size event on window #\" + EventWindow()\n    \n    ; Resize the gadget to fit the new window dimensions\n    ;\n    ResizeGadget(0, #PB_Ignore, #PB_Ignore, WindowWidth(EventWindow())-20, WindowHeight(EventWindow())-20)\n  EndProcedure\n    \n  OpenWindow(0, 100, 100, 200, 200, \"Live resize test\", #PB_Window_SizeGadget | #PB_Window_SystemMenu)\n  EditorGadget(0, 10, 10, 180, 180)\n  \n  BindEvent(#PB_Event_SizeWindow, @SizeWindowHandler())\n  \n  Repeat\n    Event = WaitWindowEvent()\n  Until Event = #PB_Event_CloseWindow",
+      "os": [
+        "All"
+      ],
+      "seeAlso": [
+        "BindGadgetEvent",
+        "BindMenuEvent",
+        "UnbindEvent",
+        "WindowEvent",
+        "WaitWindowEvent",
+        "ResizeWindow",
+        "ResizeGadget"
+      ]
+    },
+    {
+      "name": "CreateFile",
+      "library": "file",
+      "file": "file/createfile.html",
+      "syntax": [
+        "Result = CreateFile(#File, Filename$ [, Flags])"
+      ],
+      "description": "Create an empty file.",
+      "parameters": [
+        {
+          "name": "#File",
+          "description": "The number to identify the new file. #PB_Any can be used to\nauto-generate this number."
+        },
+        {
+          "name": "Filename$",
+          "description": "The filename and path to the new file. If the filename does not include a full path, it\nis interpreted relative to the current directory."
+        },
+        {
+          "name": "Flags (optional)",
+          "description": "It can be a combination (using the '| operand) of the following values:\n\n#PB_File_SharedRead : the opened file can be read by another process (Windows only).\n#PB_File_SharedWrite: the opened file can be written by another process (Windows only).\n#PB_File_NoBuffering: the internal PureBasic file buffering system will be disabled for this file.\nFileBuffersSize() can not be used on this file.\n#PB_File_BOM : the file will be created with a BOM.\n\ncombined with one of the following values (the following flags affect the WriteString()(), WriteStringN(),\nReadString(), ReadCharacter() and WriteCharacter() behaviour):\n\n#PB_Ascii : all read/write string operation will use ASCII if not specified otherwise.\n#PB_UTF8 : all read/write string operation will use UTF-8 if not specified otherwise (default).\n#PB_Unicode: all read/write string operation will use Unicode if not specified otherwise."
+        }
+      ],
+      "returnValue": "Returns nonzero if the file was created successfully and zero if there was an error.\nIf #PB_Any was used as the #File parameter then the new generated number is returned on success.",
+      "remarks": "If the file already exists, it will be overwritten by the new empty file.\nThe FileSize() function can be used to determine whether a file exists so the\nuser can be prompted before overwriting a file.\n\nTo open an existing file for reading/writing, use the OpenFile() function. To open a file for\nreading only, use ReadFile().",
+      "example": "If CreateFile(0, \"Text.txt\")         ; we create a new text file...\n    For a=1 To 10\n      WriteStringN(0, \"Line \"+Str(a))  ; we write 10 lines (each with 'end of line' character)\n    Next\n    For a=1 To 10\n      WriteString(0, \"String\"+Str(a))  ; and now we add 10 more strings on the same line (because there is no 'end of line' character)\n    Next\n    CloseFile(0)                       ; close the previously opened file and store the written data this way\n  Else\n    MessageRequester(\"Information\",\"may not create the file!\")\n  EndIf",
+      "os": [
+        "All"
+      ],
+      "seeAlso": [
+        "OpenFile",
+        "ReadFile",
+        "CloseFile"
+      ]
+    },
+    {
+      "name": "StopDrawing",
+      "library": "2ddrawing",
+      "file": "2ddrawing/stopdrawing.html",
+      "syntax": [
+        "StopDrawing()"
+      ],
+      "description": "Once all the needed graphics operations (started with StartDrawing()) have been\nperformed, this function must be called to finish the drawing and free all associated resources.",
+      "parameters": [],
+      "returnValue": "None.",
+      "remarks": "",
+      "example": "If StartDrawing(WindowOutput(0))\n    Box(10,10,20,20)\n    Line(30,50,100,100)\n    ....\n    StopDrawing() \n  EndIf",
+      "os": [
+        "All"
+      ],
+      "seeAlso": [
+        "StartDrawing"
+      ]
+    },
+    {
+      "name": "Str",
+      "library": "string",
+      "file": "string/str.html",
+      "syntax": [
+        "Result$ = Str(Value.q)"
+      ],
+      "description": "Convert a signed quad number into a string.",
+      "parameters": [
+        {
+          "name": "Value.q",
+          "description": "The value to convert."
+        }
+      ],
+      "returnValue": "A string holding the converted value.",
+      "remarks": "Floats must be converted with StrF(), doubles with StrD() and unsigned numbers with StrU().\nIt is possible to omit this command when concatenating string and integer, it will then use the default behaviour of Str().",
+      "example": "Value.q = 100000000000000001\n  Debug \"Result: \" + Str(Value)",
+      "os": [
+        "All"
+      ],
+      "seeAlso": [
+        "Val",
+        "Hex",
+        "Bin",
+        "StrF",
+        "StrD",
+        "StrU",
+        "FormatNumber"
+      ]
+    },
+    {
+      "name": "CreateCamera",
+      "library": "camera",
+      "file": "camera/createcamera.html",
+      "syntax": [
+        "Result = CreateCamera(#Camera, x, y, Width, Height [, VisibilityMask [, Lod]])"
+      ],
+      "description": "Creates a new camera in the current world, at the position x,y with the specified dimensions.\nNote that these positions and sizes are the position and sizes of the display on the screen,\nnot the position and size of the camera in the world.\n\nUnlike other graphics related functions, these coordinates and dimensions are in percents,\nfrom 0 to 100 (float numbers can be used for more precise placement). This could seems odd,\nbut 3D applications should be resolution independent and this is a good way of achieving that.\nIf a camera is created with a height of 50% then it will always fill 50% of the height of the\nscreen, irrespective of whether you use a screen which is 640*480 or 1600*1200. If a camera\nhas already been created with the same number, the previous camera is automatically\nfreed and replaced by the new one.\n\nCameras can be overlapped. This means that it is possible to display a camera which fills the whole\nscreen and put a little camera inside which shows another place in the world. To achieve this,\nthe order of creation is very important: the camera which will be on top should be created last.",
+      "parameters": [
+        {
+          "name": "#Camera",
+          "description": "The number to identify the new camera. #PB_Any can\nbe used to auto-generate this number."
+        },
+        {
+          "name": "x, y",
+          "description": "The position (in percentages) of the left edge of the start of the display for this camera.\n0 means at the left of the screen, 100 means at the right of the screen. See the picture below\nfor a better overview."
+        },
+        {
+          "name": "Width, Height",
+          "description": "The size (in percentages) the display for this camera should take up.\nSee the picture below for a better overview."
+        },
+        {
+          "name": "VisibilityMask (optional)",
+          "description": "A mask to select which entities and billboards\nto display on this camera. The camera defines\nits own mask, and if the entity or billboard mask match, then it will be displayed. By default\nthe entities and billboards have no mask, meaning they will be always displayed on all cameras."
+        },
+        {
+          "name": "Lod (optional)",
+          "description": "A Lod bias (Level Of Details) to apply to the entities which supports it. If Lod bias is < 1,\na more detailed object will be display. If Lod bias is > 1, a less detailed entity will be displayed.\nThe entity distance is divided by the Lod bias (ie: a Lod bias of 0.5 double the distance)."
+        }
+      ],
+      "returnValue": "Returns zero if the camera can't be created. If #PB_Any is used\nas '#Camera' parameter, the new camera number will be returned as 'Result'.",
+      "remarks": "",
+      "example": "CreateCamera(0, 0, 0, 100, 100) ; Creates a camera which fill the whole screen\n  \n  CreateCamera(0, 0,  0, 100, 50) ; Creates an horizontal split screen effect, for 2 players\n  CreateCamera(1, 0, 50, 100, 50) ; mode on the same screen\n\n  CreateCamera(0, 0, 0, 100, 100) ; Create a full screen camera\n  CreateCamera(1, 25, 0, 50, 10)  ; And a rearview mirror effect.\n                                  ; Note the rearview is last so that it is displayed on top of the full screen camera\n\n; upper camera\n  CreateCamera(0, 0, 0, 100, 50)  \n  MoveCamera(0, 0, 50, 150, #PB_Absolute)\n  CameraBackColor(0, RGB(215, 225, 255))\n  \n  ; camera below\n  CreateCamera(1, 0, 50, 100, 50) \n  MoveCamera(1, 0, 50, -150, #PB_Absolute)\n  CameraBackColor(1, RGB(255, 225, 215))\n  RotateCamera(1, 180, 0, 0)",
+      "os": [
+        "All"
+      ],
+      "seeAlso": [
+        "FreeCamera",
+        "ResizeCamera"
+      ]
+    },
+    {
+      "name": "CGIParameterName",
+      "library": "cgi",
+      "file": "cgi/cgiparametername.html",
+      "syntax": [
+        "Result = CGIParameterName(Index)"
+      ],
+      "description": "Returns the name of the specified parameter.",
+      "parameters": [
+        {
+          "name": "Index",
+          "description": "The index of the parameter to get the name. The first index value starts from 0.\nTo get the number of available parameters, use CountCGIParameters()."
+        }
+      ],
+      "returnValue": "Returns the name of the specified parameter.",
+      "remarks": "",
+      "example": "If Not InitCGI() Or Not ReadCGI()\n    End\n  EndIf\n  \n  WriteCGIHeader(#PB_CGI_HeaderContentType, \"text/html\", #PB_CGI_LastHeader) ; Write the headers to inform the browser of the content format\n  \n  WriteCGIString(\"<html><title>PureBasic - parameters</title><body>\" +\n                 \"NbParameters: \" + CountCGIParameters() + \"<br><br>\")\n  \n  ; List the all parameters and display their name\n  ;\n  For k = 0 To CountCGIParameters()-1 \n    WriteCGIString(CGIParameterName(k)+\"<br>\")\n  Next\n  \n  WriteCGIString(\"</body></html>\")",
+      "os": [
+        "All"
+      ],
+      "seeAlso": [
+        "CountCGIParameters",
+        "CGIParameterValue",
+        "CGIParameterType"
+      ]
+    },
+    {
+      "name": "MessageRequester",
+      "library": "requester",
+      "file": "requester/messagerequester.html",
+      "syntax": [
+        "Result = MessageRequester(Title$, Text$ [, Flags [, ParentID]])"
+      ],
+      "description": "Opens a blocking requester to display some information. The program execution\nis totally stopped until the user close the requester.",
+      "parameters": [
+        {
+          "name": "Title$",
+          "description": "The title of the requester window."
+        },
+        {
+          "name": "Text$",
+          "description": "The text displayed in the requester window."
+        },
+        {
+          "name": "Flags (optional)",
+          "description": "It can be one of the following value:\n\n#PB_MessageRequester_Ok : to have the 'ok' only button (default)\n#PB_MessageRequester_YesNo : to have 'yes' or 'no' buttons\n#PB_MessageRequester_YesNoCancel : to have 'yes', 'no' and 'cancel' buttons\n\nCombined with one of the following value:\n\n#PB_MessageRequester_Info : displays an info icon\n#PB_MessageRequester_Warning: displays a warning icon\n#PB_MessageRequester_Error : displays an error icon"
+        },
+        {
+          "name": "ParentID (optional)",
+          "description": "The parent window identifier. A valid window identifier can be retrieved with WindowID()."
+        }
+      ],
+      "returnValue": "It can be one of the following constants:\n\n#PB_MessageRequester_Yes : the 'yes' button was pressed\n#PB_MessageRequester_No : the 'no' button was pressed\n#PB_MessageRequester_Cancel : the 'Cancel' button was pressed",
+      "remarks": "",
+      "example": "MessageRequester(\"Information\", \"Just a short information text.\", #PB_MessageRequester_Ok | #PB_MessageRequester_Info)\n\nResult = MessageRequester(\"Title\", \"Please make your input:\", #PB_MessageRequester_YesNo)\n  a$ = \"Result of the requester was: \"\n  If Result = #PB_MessageRequester_Yes    ; pressed Yes button\n    a$ + \"Yes\"\n  Else                                    ; pressed No button\n    a$ + \"No\"\n  EndIf\n  MessageRequester(\"Information\", a$, #PB_MessageRequester_Ok)\n\nResult = MessageRequester(\"Title\", \"Please make your input:\", #PB_MessageRequester_YesNoCancel) \n  a$ = \"Result of the previously requester was: \"\n  If Result = #PB_MessageRequester_Yes       ; pressed Yes button\n    a$ + \"Yes\"\n  ElseIf Result = #PB_MessageRequester_No    ; pressed No button\n    a$ + \"No\"\n  Else                                       ; pressed Cancel button or Esc\n    a$ + \"Cancel\"\n  EndIf\n  MessageRequester(\"Information\", a$, #PB_MessageRequester_Ok)",
+      "os": [
+        "All"
+      ],
+      "seeAlso": []
+    },
+    {
+      "name": "ReadFile",
+      "library": "file",
+      "file": "file/readfile.html",
+      "syntax": [
+        "Result = ReadFile(#File, Filename$ [, Flags])"
+      ],
+      "description": "Open an existing file for read-only operations.",
+      "parameters": [
+        {
+          "name": "#File",
+          "description": "The number to identify the file. #PB_Any can be used to\nauto-generate this number."
+        },
+        {
+          "name": "Filename$",
+          "description": "The filename and path to the file. If the filename does not include a full path, it\nis interpreted relative to the current directory."
+        },
+        {
+          "name": "Flags (optional)",
+          "description": "It can be a combination (using the '| operand) of the following values:\n\n#PB_File_SharedRead : if the file has been already opened by another process or thread for read operation,\nthis flag is needed to access it (Windows only).\n#PB_File_SharedWrite: if the file has been already opened by another process or thread for write operation,\nthis flag is needed to access it (Windows only).\n#PB_File_NoBuffering: the internal PureBasic file buffering system will be disabled for this file.\nFileBuffersSize() can not be used on this file.\n#PB_File_BOM : if the file contains a BOM, it will be handled automatically (no need to use ReadStringFormat()).\nThe detected format will be automatically used by the read and write string functions.\n\ncombined with one of the following values (the following flags affect the behaviour of ReadString()\nand ReadCharacter()):\n\n#PB_Ascii : all read string operation will use ASCII if not specified otherwise.\n#PB_UTF8 : all read string operation will use UTF-8 if not specified otherwise (default).\n#PB_Unicode: all read string operation will use Unicode if not specified otherwise."
+        }
+      ],
+      "returnValue": "Returns nonzero if the file was opened successfully and zero if there was an error.\nIf #PB_Any was used as the #File parameter then the new generated number is returned on success.",
+      "remarks": "To open a file for reading and writing, use the OpenFile() function.\nTo create a new and empty file, use the CreateFile() function.",
+      "example": "If ReadFile(0, \"Text.txt\")        ; if the file could be read, we continue ...\n    Format = ReadStringFormat(0)\n    While Eof(0) = 0                ; loop as long the 'end of file' isn't reached\n      Debug ReadString(0, Format)   ; display line by line in the debug window\n    Wend\n    CloseFile(0)                    ; close the previously opened file\n  Else\n    MessageRequester(\"Information\", \"Couldn't open the file!\")\n  EndIf",
+      "os": [
+        "All"
+      ],
+      "seeAlso": [
+        "OpenFile",
+        "CreateFile",
+        "CloseFile"
+      ]
+    },
+    {
+      "name": "CopyFile",
+      "library": "filesystem",
+      "file": "filesystem/copyfile.html",
+      "syntax": [
+        "Result = CopyFile(SourceFilename$, DestinationFilename$)"
+      ],
+      "description": "Copy the source file to the destination.",
+      "parameters": [
+        {
+          "name": "SourceFilename$",
+          "description": "The file to copy."
+        },
+        {
+          "name": "DestinationFilename$",
+          "description": "The location to copy the file to."
+        }
+      ],
+      "returnValue": "Returns nonzero if the operation was successful or zero if it failed.",
+      "remarks": "If the destination file already exists, it will be overwritten. The FileSize() function\ncan be used to determine if the target exists or not. If source file and destination file\nare the same, a copy will not occur and zero will be returned.",
+      "example": "",
+      "os": [
+        "All"
+      ],
+      "seeAlso": [
+        "RenameFile",
+        "DeleteFile",
+        "FileSize",
+        "CreateFile",
+        "OpenFile"
+      ]
+    },
+    {
+      "name": "Mid",
+      "library": "string",
+      "file": "string/mid.html",
+      "syntax": [
+        "Result$ = Mid(String$, StartPosition [, Length])"
+      ],
+      "description": "Extracts a string of specified length from the given string.",
+      "parameters": [
+        {
+          "name": "String$",
+          "description": "The string to use."
+        },
+        {
+          "name": "StartPosition",
+          "description": "Specifies the character position to start the extracting. The first character position is 1."
+        },
+        {
+          "name": "Length (optional)",
+          "description": "Specifies how many characters needs to be extracted. If this parameter is omitted, characters\nare extracted until the end of string."
+        }
+      ],
+      "returnValue": "A new string holding the extracted characters.",
+      "remarks": "",
+      "example": "Debug Mid(\"Hello\", 2) ; Will display \"ello\"\n  Debug Mid(\"Hello\", 2, 1) ; Will display \"e\"",
+      "os": [
+        "All"
+      ],
+      "seeAlso": []
+    },
+    {
+      "name": "Random",
+      "library": "math",
+      "file": "math/random.html",
+      "syntax": [
+        "Result = Random(Maximum [, Minimum])"
+      ],
+      "description": "Returns a random number from zero to the given maximum value (both values included).",
+      "parameters": [
+        {
+          "name": "Maximum",
+          "description": "The maximum value. This value needs to be positive (zero included) and\nmay not exceed the maximum positive integer value."
+        },
+        {
+          "name": "Minimum (optional)",
+          "description": "The minimum value. It may not exceed the maximum value. If specified, the random\nnumber will be from the minimum value to the maximum value (both values included).\nThis value needs to be positive (zero included) and may not exceed the maximum positive integer value."
+        }
+      ],
+      "returnValue": "Returns a value from zero to the maximum value (both values included), unless a minimum value is specified.",
+      "remarks": "Additionally RandomSeed() may be used to change the random number seed.\nRandomData() can be used to fill a memory buffer with random data.\nRandomizeArray() or RandomizeList() can be used, to randomize the elements of an array\nor a list.\n\nNote: This command uses a pseudorandom number generator which is very fast and produces\nrandomly looking output but it is not strong enough for cryptographic purposes.\nThe slower CryptRandom() command can be used if more secure random\nnumber generation is required.",
+      "example": "Repeat\n    Dice = Random(6, 1)  ; get a value between 1 and 6, including 1 and 6\n    Choice = MessageRequester(\"Roll the dice\", \"You got a \" + Dice + \", roll again?\", #PB_MessageRequester_YesNo)\n  Until Choice = #PB_MessageRequester_No",
+      "os": [
+        "All"
+      ],
+      "seeAlso": [
+        "RandomSeed",
+        "RandomData",
+        "CryptRandom",
+        "RandomizeArray",
+        "RandomizeList"
+      ]
+    },
+    {
+      "name": "CreateThread",
+      "library": "thread",
+      "file": "thread/createthread.html",
+      "syntax": [
+        "Thread = CreateThread(@ProcedureName(), *Value)"
+      ],
+      "description": "Creates a new thread running in the application background. If the thread is\ncorrectly created, it returns the Thread number which is used with the\nother thread functions, such as KillThread(), PauseThread(), etc. The procedure\nwhich you use as a thread must take one parameter and cannot return anything.\nThe '*Value' argument of CreateThread() is passed as the parameter to the procedure.\nIf you do try to return a value from your thread it will simply be lost.",
+      "parameters": [
+        {
+          "name": "@ProcedureName()",
+          "description": "The address of the procedure you want to use as the code for the\nnew thread. Remember to put the @ in front to get the name and the () afterwards so\nit gets the address of the procedure."
+        },
+        {
+          "name": "*Value",
+          "description": "The value passed to the thread procedure as parameter. It is up to\nyou to decide what this is used for."
+        }
+      ],
+      "returnValue": "The number for the newly created thread, or zero if a new thread could not be created.\nThis number is required if you want to control the thread using the other functions in this library.",
+      "remarks": "",
+      "example": "Procedure YourProcedure(*Value)\n    ; The variable '*Value' will contain 23\n  EndProcedure\n\n  CreateThread(@YourProcedure(), 23)\n\nStructure Person\n    Name$\n    Age.b\n    Phone.l\n  EndStructure\n  \n  Procedure Thread(*Parameters.Person)\n    \n    ; Display the parameters\n    ;\n    Debug *Parameters\\Name$\n    Debug *Parameters\\Age\n    Debug *Parameters\\Phone\n    \n    ; Once we don't need them anymore, use ClearStructure() to ensure dynamic \n    ; objects (if any) are correctly cleared, and release the dynamic memory block\n    ClearStructure(*Parameters, Person)\n    FreeMemory(*Parameters)\n    \n  EndProcedure\n  \n  ; We use a dynamically allocated block, so even if we call it from a procedure, it will\n  ; still work. The memory block will be freed by the thread, when the thread ends.\n  ;\n  *Parameters.Person = AllocateMemory(SizeOf(Person))\n  *Parameters\\Name$ = \"John\"\n  *Parameters\\Age   = 30\n  *Parameters\\Phone = 10203040\n  \n  CreateThread(@Thread(), *Parameters) ; Send the thread a pointer to our structure\n\n  Delay(2000)",
+      "os": [
+        "All"
+      ],
+      "seeAlso": []
+    },
+    {
+      "name": "CreateMutex",
+      "library": "thread",
+      "file": "thread/createmutex.html",
+      "syntax": [
+        "Mutex = CreateMutex()"
+      ],
+      "description": "Creates a new mutex object. The mutex is initially unlocked.\n\nThe main objective of the mutex functions is thread synchronization. They do not create\ntoo much overhead, but they only work within one program, not system-wide.\nA mutex is an object that can only be \"owned\" or locked by one thread at a time,\nso it is used to protect shared resources. Only the thread that has the mutex\nlocked may access a certain file, memory area, ...\n\nSee LockMutex() and UnlockMutex() for locking/unlocking a mutex.",
+      "parameters": [],
+      "returnValue": "The new mutext object, or zero if the mutex creation has failed.",
+      "remarks": "",
+      "example": "; Run this code once as it is. You will see that the lines printed are\n  ; mixed from between the threads. Now uncomment the Mutex functions and\n  ; the strings are printed in order, because only one thread at a time\n  ; has the right to execute the printing functions.\n  ;\n  Procedure WithoutMutex(*Number)     \n    Shared Mutex\n    \n    For a = 1 To 5      \n      ;LockMutex(Mutex)    ; uncomment this to see the difference\n    \n      PrintN(\"Thread \"+Str(*Number)+\": Trying to print 5x in a row:\")\n      For b = 1 To 5\n        Delay(50)\n        PrintN(\"Thread \"+Str(*Number)+\" Line \"+Str(b))\n      Next b          \n      \n      ;UnlockMutex(Mutex) ; uncomment this to see the difference\n    Next a    \n  EndProcedure\n  \n  OpenConsole()\n  Mutex = CreateMutex()\n  \n  thread1 = CreateThread(@WithoutMutex(), 1)\n  Delay(25)\n  thread2 = CreateThread(@WithoutMutex(), 2)\n  Delay(25)\n  thread3 = CreateThread(@WithoutMutex(), 3)\n  \n  WaitThread(thread1)\n  WaitThread(thread2)\n  WaitThread(thread3)\n  \n  Input()",
+      "os": [
+        "All"
+      ],
+      "seeAlso": []
+    }
+  ],
+  "reference": [
+    {
+      "id": "colortable",
+      "title": "Color table",
+      "file": "reference/colortable.html",
+      "summary": ""
+    },
+    {
+      "id": "compilerdirectives",
+      "title": "Compiler Directives",
+      "file": "reference/compilerdirectives.html",
+      "summary": ""
+    }
+  ],
+  "referenceText": {
+    "reference/colortable.html": "Color table\n\nOverview\n\nBelow you find a colortable with 216 different colors in different variations.\nIt should give you an overview of possible colors and facilitate you when choosing\nthe color for your graphics, texts, backgrounds etc. The color is indicated as HEX number!\n\nThe color values of the table below are displayed in the usable RGB format (red, green, blue).\nFor example the blue color in the top-right corner means the hex value '$0000FF', where the\ntwo 'FF' mark the full blue part.\n\nAt all PureBasic commands expecting a color value, you have three possibilities:\n\n1.) Submit the displayed hex values - split in their three color parts - in the order\n(R)ed, (G)reen and (B)lue with the command RGB():\n\nPlot(0, 0, RGB($00,$00,$FF))\n\n2.) submit the color value as whole value - but then the red and blue parts must be swapped,\ni.e. the color submitted in the BGR format. Out blue color will be used then this way:\n\nPlot(0, 0, $FF0000))\n\n3.) Use the following color constants:\n\n#Black   \n      #Blue    \n      #Cyan    \n      #Gray    \n      #Green   \n      #Red     \n      #White   \n      #Yellow\n\nBe careful however to the desktop theme of operating systems that can alter the\ndisplayed color.\n\nPlot(0, 0, #Red))\n\nTip for advanced users: RGB single values will be calculated to a total color value like following:\nColor = R + G*256 + B*65536\n\nColor table\n\n000000\n000033\n000066\n000099\n0000CC\n0000FF\n\n330000\n330033\n330066\n330099\n3300CC\n3300FF\n\n660000\n660033\n660066\n660099\n6600CC\n6600FF\n\n990000\n990033\n990066\n990099\n9900CC\n9900FF\n\nCC0000\nCC0033\nCC0066\nCC0099\nCC00CC\nCC00FF\n\nFF0000\nFF0033\nFF0066\nFF0099\nFF00CC\nFF00FF\n\n003300\n003333\n003366\n003399\n0033CC\n0033FF\n\n333300\n333333\n333366\n333399\n3333CC\n3333FF\n\n663300\n663333\n663366\n663399\n6633CC\n6633FF\n\n993300\n993333\n993366\n993399\n9933CC\n9933FF\n\nCC3300\nCC3333\nCC3366\nCC3399\nCC33CC\nCC33FF\n\nFF3300\nFF3333\nFF3366\nFF3399\nFF33CC\nFF33FF\n\n006600\n006633\n006666\n006699\n0066CC\n0066FF\n\n336600\n336633\n336666\n336699\n3366CC\n3366FF\n\n666600\n666633\n666666\n666699\n6666CC\n6666FF\n\n996600\n996633\n996666\n996699\n9966CC\n9966FF\n\nCC6600\nCC6633\nCC6666\nCC6699\nCC66CC\nCC66FF\n\nFF6600\nFF6633\nFF6666\nFF6699\nFF66CC\nFF66FF\n\n009900\n009933\n009966\n009999\n0099CC\n0099FF\n\n339900\n339933\n339966\n339999\n3399CC\n3399FF\n\n669900\n669933\n669966\n669999\n6699CC\n6699FF\n\n999900\n999933\n999966\n999999\n9999CC\n9999FF\n\nCC9900\nCC9933\nCC9966\nCC9999\nCC99CC\nCC99FF\n\nFF9900\nFF9933\nFF9966\nFF9999\nFF99CC\nFF99FF\n\n00CC00\n00CC33\n00CC66\n00CC99\n00CCCC\n00CCFF\n\n33CC00\n33CC33\n33CC66\n33CC99\n33CCCC\n33CCFF\n\n66CC00\n66CC33\n66CC66\n66CC99\n66CCCC\n66CCFF\n\n99CC00\n99CC33\n99CC66\n99CC99\n99CCCC\n99CCFF\n\nCCCC00\nCCCC33\nCCCC66\nCCCC99\nCCCCCC\nCCCCFF\n\nFFCC00\nFFCC33\nFFCC66\nFFCC99\nFFCCCC\nFFCCFF\n\n00FF00\n00FF33\n00FF66\n00FF99\n00FFCC\n00FFFF\n\n33FF00\n33FF33\n33FF66\n33FF99\n33FFCC\n33FFFF\n\n66FF00\n66FF33\n66FF66\n66FF99\n66FFCC\n66FFFF\n\n99FF00\n99FF33\n99FF66\n99FF99\n99FFCC\n99FFFF\n\nCCFF00\nCCFF33\nCCFF66\nCCFF99\nCCFFCC\nCCFFFF\n\nFFFF00\nFFFF33\nFFFF66\nFFFF99\nFFFFCC\nFFFFFF",
+    "reference/compilerdirectives.html": "Compiler Directives\n\nSyntax\n\nCompilerIf <constant expression>\n  ...\n[CompilerElseIf]\n  ...\n[CompilerElse]\n  ...\nCompilerEndIf\n\nDescription\n\nIf the <constant expression> result is true, the code inside the CompilerIf will be compiled,\nelse it will be totally ignored. It's useful when building multi-OSes programs to\ncustomize some programs part by using OS specific functions. The And and Or Keywords\ncan be used in <constant expression> to combine multiple conditions.\n\nExample\n\nCompilerIf #PB_Compiler_OS = #PB_OS_Linux And #PB_Compiler_Processor = #PB_Processor_x86\n    ; some Linux and x86 specific code.\n  CompilerEndIf\n\nSyntax\n\nCompilerSelect <numeric constant>\n  CompilerCase <numeric constant>\n    ...\n  [CompilerDefault]\n    ...\nCompilerEndSelect\n\nDescription\n\nWorks like a regular Select : EndSelect except that only one numeric\nvalue is allowed per case. It will tell the compiler which code should\nbe compiled. It's useful when building multi-OSes programs to customize some programs part\nby using OS specific functions.\n\nExample\n\nCompilerSelect #PB_Compiler_OS\n    CompilerCase #PB_OS_MacOS\n      ; some Mac OS X specific code\n    CompilerCase #PB_OS_Linux\n      ; some Linux specific code\n  CompilerEndSelect\n\nSyntax\n\nCompilerError <string constant>\nCompilerWarning <string constant>\n\nDescription\n\nGenerates an error or a warning, as if it was a syntax error and display the associated message. It can be useful\nwhen doing specialized routines, or to inform a source code is not available on an particular OS.\n\nNote: CompilerWarning displays warnings, but the compilation process continues, while the command\nCompilerError stops the compilation process.\n\nExample: Generates an error\n\nCompilerIf #PB_Compiler_OS = #PB_OS_Linux\n    CompilerError \"Linux isn't supported, sorry.\"\n  CompilerElse\n    CompilerError \"OS supported, you can now comment me.\"\n  CompilerEndIf\n\nExample: Generates a warning\n\nCompilerIf #PB_Compiler_OS = #PB_OS_Linux\n    CompilerWarning \"Linux isn't supported, sorry.\"\n  CompilerElse\n    CompilerWarning \"OS supported, you can now comment me.\"\n  CompilerEndIf\n\nSyntax\n\nEnableExplicit\nDisableExplicit\n\nDescription\n\nEnables or disables the explicit mode. When enabled, all the variables which are not explicitly\ndeclared with Define, Global, Protected or\nStatic are not accepted and the compiler\nwill raise an error. It can help to catch typo bugs.\n\nExample\n\nEnableExplicit\n  \n  Define a\n  \n  a = 20 ; Ok, as declared with 'Define'\n  b = 10 ; Will raise an error here\n\nSyntax\n\nEnableASM\nDisableASM\n\nDescription\n\nEnables or disables the inline assembler. When enabled, all the assembler keywords are available directly\nin the source code, see the inline assembler section for more information.\n\nExample\n\n; x86 assembly example\n  ;\n  Test = 10\n  \n  EnableASM\n    MOV dword [v_Test],20\n  DisableASM\n  \n  Debug Test ; Will be 20\n\nSyntax\n\nHeaderSection\n  ! NativeCode\nEndHeaderSection\n\nDescription\n\nFor advanced programmers. HeaderSection : EndHeaderSection allows to insert native code directly\nin the generated code output, in the header section (outside of any function). The native code which can be inserted\ndepends on the compiler backend used:\n\n- If the C backend is used, C code needs to be inserted.\n\n- If the x86 backend is used, x86 asm code needs to be inserted.\n\n- If the x64 backend is used, x64 asm code needs to be inserted.\n\nThis command can be useful to automatically tune the generated code output or to insert some raw code into the final executable.\n\nExample\n\nCompilerIf #PB_Compiler_Backend <> #PB_Backend_C\n    CompilerError \"This sample only works with C backend\"\n  CompilerEndIf\n\n  HeaderSection\n    void customPrint()\n    {\n      printf(\"%s, %s!\\n\", \"Hello\", \"World\");\n    }\n  EndHeaderSection\n  \n  ; Assign the custom function to a PureBasic variable so we can use it\n  ;\n  PrototypeC CustomPrintProto()\n  CustomPrint.CustomPrintProto\n  !v_customprint = customPrint;\n  \n  OpenConsole()\n  \n  ; Use the native function !\n  CustomPrint()\n  \n  Input()\n\nSyntax\n\nDisablePureLibrary <LibraryName>\n\nDescription\n\nDisables the specified PureLibrary. All its associated commands won't be available when compiling this program.\nThis is especially useful when creating a PureLibrary.\n\nExample\n\nDisablePureLibrary Engine3D\n  \n  InitEngine3D() ; Error, command not found\n\nReserved Constants\n\nThe PureBasic compiler has several reserved constants which can be useful to the programmer:\n\n#PB_Compiler_OS : Determines on which OS the compiler is currently running. It can be one of the following values:\n    #PB_OS_Windows : The compiler is running on Windows\n    #PB_OS_Linux   : The compiler is running on Linux\n    #PB_OS_MacOS   : The compiler is running on Mac OS X\n\n  #PB_Compiler_Processor : Determines the processor type for which the program is created. It can be one of the following:\n    #PB_Processor_x86     : x86 processor architecture (also called IA-32 or x86-32)\n    #PB_Processor_x64     : x86-64 processor architecture (also called x64, AMD64 or Intel64)\n    #PB_Processor_arm32   : arm32 processor architecture\n    #PB_Processor_arm64   : arm64 processor architecture (also called M1 on Apple computers)\n\n  #PB_Compiler_Backend : Determines which kind of compiler is currently used. It can be one of the following:\n    #PB_Backend_Asm    : The compiler generating assembly code is used.\n    #PB_Backend_C      : The compiler generating C code is used.\n  \n  #PB_Compiler_ExecutableFormat : Determines executable format. It can be one of the following:\n    #PB_Compiler_Executable : Regular executable\n    #PB_Compiler_Console    : Console executable (have an effect only on Windows, other act like a regular executable)\n    #PB_Compiler_DLL        : Shared DLL (dynlib on MacOS X and shared object on Linux)\n\n  #PB_Compiler_Date     : Current date, at the compile time, in the PureBasic  date format (local time).\n  #PB_Compiler_File     : Full path and name of the file being compiled, useful for debug purpose.\n  #PB_Compiler_FilePath : Full path of the file being compiled, useful for debug purpose.\n  #PB_Compiler_Filename : Filename (without path) of the file being compiled, useful for debug purpose.\n  #PB_Compiler_Line     : Line number of the file being compiled, useful for debug purpose.\n  #PB_Compiler_Procedure: Current procedure name, if the line is inside a procedure.\n  #PB_Compiler_Module   : Current module name, if the line is inside a module.\n  #PB_Compiler_Version  : Compiler version, in integer format in the form '420' for 4.20.\n  #PB_Compiler_Home     : Full path of the PureBasic directory, can be useful to locate include files\n  #PB_Compiler_Debugger : Set to 1 if the runtime debugger is enabled, set to 0 else. When an executable\n                          is created, the debugger is always disabled (this constant will be 0).\n  #PB_Compiler_Thread   : Set to 1 if the executable is compiled in thread safe mode, set to 0 else.\n  #PB_Compiler_Unicode  : Set to 1 if the executable is compiled in unicode mode, set to 0 else.\n  #PB_Compiler_LineNumbering : Set to 1 if the executable is compiled with OnError line numbering support, set to 0 else.\n  #PB_Compiler_InlineAssembly: Set to 1 if the executable is compiled with inline assembly support, set to 0 else.\n  #PB_Compiler_EnableExplicit: Set to 1 if the executable is compiled with enable explicit support, set to 0 else.\n  #PB_Compiler_IsMainFile    : Set to 1 if the file being compiled is the main file, set to 0 else.\n  #PB_Compiler_IsIncludeFile : Set to 1 if the file being compiled has been included by another file, set to 0 else.\n  #PB_Compiler_32Bit    : Set to 1 if the compiler generates 32-bit code, set to 0 else.\n  #PB_Compiler_64Bit    : Set to 1 if the compiler generates 64-bit code, set to 0 else.\n  #PB_Compiler_Optimizer: Set to 1 if the compiler generates optimized code, set to 0 else.\n  #PB_Compiler_DPIAware : Set to 1 if the compiler generates a DPI aware executable, set to 0 else.\n\nExample\n\nCompilerSystemData.pb"
+  }
+}

@@ -17,7 +17,7 @@ dependencies (no Node, no npx).
 | Tool             | Description                                                                                                                                                                                                        |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `pb_docs_search` | Search the PureBasic command reference. Returns command names, library, and one-line summaries. Optional `library` filter, `limit` (1–25, default 10).                                                              |
-| `pb_command`     | Full documentation for one command: exact syntax, parameters, return value, remarks, example, supported OS, related commands. Also resolves reference-page titles (Compiler Directives, Includes, migration guides, UserGuide) to their full-text URL.                                                        |
+| `pb_command`     | Full command documentation: syntax, parameters, return value, remarks, example, OS, and related commands. Reference-page titles and aliases return bounded local text with the official source URL. Older indexes retain a URL fallback until rebuilt. |
 | `pb_check`       | Syntax-check a `.pb` file with the **real compiler** (~350 ms). Returns structured errors with line numbers, high-confidence hints on common beginner errors, and always-on best-practice notes (missing `EnableExplicit`, `Global` inside procedures, `Goto`/`Gosub`). The file's project tree is staged to a bounded temporary workspace (see [Project staging](#project-staging)); originals are never modified.                                                                                                     |
 | `pb_run`         | Compile and run a console program, capturing stdout. Accepts `args[]` and `timeoutMs` (default 15000, max 60000). Console programs only; the program runs inside the staged copy with the entry file's directory as its working directory, so relative resources and executable-relative DLLs come from the copied project. Generated files are ephemeral and removed with the workspace. |
 | `pb_version`     | Report the server version, MCP protocol version, detected PureBasic compiler version + install path, and the docs-index version + build date + entry counts. Takes no arguments.                                     |
@@ -34,8 +34,12 @@ The compiler tools (`pb_check`, `pb_run`) work without an index.
     `C:\PureBasic` → `%LOCALAPPDATA%\Programs\PureBasic`
   - Linux: `PUREBASIC_HOME` → `~/purebasic` → `/opt/purebasic` →
     `/usr/local/purebasic` → `pbcompiler` on `PATH`
-- **Node.js** — only to (re)build the docs index; the tooling lives in `tools/`.
-  A prebuilt `index-*.json` or an embedded index needs no Node at all.
+- **Node.js 18+** — required for source builds to index the selected compiler's
+  installed help. Running the packaged server needs no Node.
+- **Installed PureBasic help** — Windows uses `PureBasic.chm`; Linux uses the
+  installed HTML help tree. Windows tries its built-in `hh.exe` extractor,
+  then 7-Zip (`7z`/`7zz` on PATH or its standard Windows install location).
+  Install 7-Zip if `hh.exe` cannot extract the manual.
 - **Linux note**: the official PureBasic Linux compiler is a glibc ≥ 2.38
   binary (Ubuntu 24.04+); on older distros use the compiler your distro can
   run. If linking fails with `undefined reference to __wrap_memcpy`, see the
@@ -43,46 +47,31 @@ The compiler tools (`pb_check`, `pb_run`) work without an index.
 
 ## Build from source (including the JSON index)
 
-Follow these steps once to produce a self-contained `pbmcp.exe` with the docs
-index baked in. The order matters: the index builder shells out to
-`pbmcp.exe scan`, so the exe must exist before the index is built.
+Install PureBasic with its help and Node.js, then run from the repository root:
 
-1. **Install prerequisites** — Windows, [PureBasic](https://www.purebasic.com/)
-   6.40 x64 (found via `PUREBASIC_HOME` or the default per-user install
-   location), and [Node.js](https://nodejs.org/) 18+.
-2. **Get the source** — clone or download this repository and open a shell in
-   its root.
-3. **First build** (from the placeholder index in `src/pbdocs-index.json`):
+    build.cmd
 
-       build.cmd
+Set `PUREBASIC_HOME` to select an installation; otherwise the build uses the
+same discovery order as the server. The build lints the sources, detects the
+selected compiler version, and indexes the help from that installation before
+compiling the final executable. It checks the manual's own version in
+`MainGuide/history.html`; missing help, unknown versions, version mismatches,
+extraction failures, or incomplete command coverage fail the build.
 
-   One command: a UTF-8 BOM lint over `src/*.pb`, then a 6.40 `/CONSOLE`
-   compile to `pbmcp.exe`.
-4. **Build the docs index JSON** from the official online documentation
-   (~2000 pages, one-time):
+The first build compiles a temporary scanner, extracts/parses the local help,
+then embeds the resulting `src/pbdocs-index.json` in the final executable.
+No existing server binary or network access is required. Subsequent builds
+reuse that index when the compiler, help content, and parser inputs are unchanged.
+The previous index remains intact if generation fails. Changing installations
+or updating the help automatically invalidates the cache.
 
-       node tools/fetch-online-docs.mjs tmp/online-docs
-       node tools/build-online-index.mjs tmp/online-docs --out src/pbdocs-index.json --pb-version 6.40
+    pbmcp.exe version          # compiler and docs versions should match
+    node test/run_tests.mjs    # acceptance suite, including installed-help checks
+    make-dist.cmd             # build and assemble the self-contained dist\ bundle
+    build.cmd check           # syntax only; does not regenerate documentation
 
-   To embed a specific PureBasic help version, pass that version to
-   `--pb-version` and name the output `index-<version>.json` instead.
-5. **Rebuild with the index embedded** — `src/docs_index.pb` bakes
-   `src/pbdocs-index.json` into the binary via `IncludeBinary`, so:
-
-       build.cmd
-
-   The embedding adds ~2 MB. Prefer a small exe? Skip this step and instead
-   drop the JSON next to the exe as `index-<version>.json`; the server loads
-   the newest `index*.json` in its directory by mtime, and a drop-in file
-   overrides the embedded one.
-6. **Verify and package**:
-
-       pbmcp.exe version          # shows server, protocol, PureBasic and docs-index versions + entry counts
-       node test/run_tests.mjs    # full acceptance suite (optional)
-       make-dist.cmd              # assemble the self-contained dist\ bundle (optional)
-Build options:
-
-    build.cmd check      authoritative 6.40 /CHECK on the real tree
+(`pb_check` preserves relative includes. Use `build.cmd check` for this server's
+required thread-safe compiler setting, which the MCP interface does not expose.)
 
 ### Linux
 
@@ -93,15 +82,10 @@ for linking; bash):
     bash build.sh check      # --check on the real tree (authoritative syntax gate)
     bash make-dist.sh        # assemble the self-contained dist/ bundle
 
-The only deliberate difference from `build.cmd`: the Linux compile passes
-`--thread`. The non-TS runtime heap-corrupts when the docs-index preload
-thread runs concurrently with main-thread runtime use — measured, see
-`PORTING-LINUX.md`. The Windows build stays non-TS, and for the same
-reason its serve mode defaults the docs-index preload **off**: the index
-loads lazily on the first docs call (`PBMCP_PRELOAD=1` force-enables the
-background preload; known heap-corruption hazard — same note). Compiler
-discovery matches the table above; `PBMCP_OUT` overrides the output path
-on both OSes.
+Both builds require thread safety (`/THREAD` on Windows, `--thread` on Linux)
+because documentation preload runs concurrently with request handling. The
+entry point rejects builds without it. Compiler discovery matches the table
+above; `PBMCP_OUT` overrides the output path on both OSes.
 
 ## Project staging
 
@@ -183,8 +167,8 @@ interpretation; the root only selects what gets staged:
 
     make-dist.cmd    (Windows)  /  make-dist.sh    (Linux)
 
-Builds the binary straight into `dist/` (via the `PBMCP_OUT` override, so a
-running server cannot lock the target), smoke-tests that the artifact
+Builds the binary and matching installed-help index into `dist/` (via the
+`PBMCP_OUT` override), smoke-tests that the artifact
 launches, and assembles the self-contained bundle:
 
     dist/pbmcp[.exe]                  native server binary
@@ -194,7 +178,8 @@ launches, and assembles the self-contained bundle:
     dist/INSTALL.md                   quickstart for binary consumers
     dist/skills/purebasic/            companion agent skill (SKILL.md + references/)
 
-`dist/` is gitignored; regenerate after every release-worthy change.
+`dist/` is gitignored; regenerate after every release-worthy change. Close any
+client running `dist/pbmcp[.exe]` before replacing it on Windows.
 
 ## Companion skill
 
@@ -207,6 +192,13 @@ edit batch, console-only `pb_run`, portable relative includes — see the
 skill's tooling reference). Not required to run the server, but strongly
 recommended — copy the whole folder into the client's skills directory
 (see `INSTALL.md`, step 4).
+
+For faster iteration, look up a known command directly with `pb_command`, use
+`pb_docs_search` to discover names, and reuse documentation from the current
+session. Check each coherent edit batch before delivery. `pb_run` rejects
+arguments containing double quotes, NUL, or newlines. Supported arguments are
+passed as separate program parameters. Its executable and compiler artifacts stay in temporary
+storage, while relative includes and runtime data paths use the original source.
 
 ## Client configuration
 
@@ -250,6 +242,7 @@ shape under `"mcpServers"`. On Linux the command is e.g.
     pbmcp.exe                                      serve MCP over stdio (default)
     pbmcp.exe version                              server/protocol/PureBasic/docs-index versions (also `--version`, `-v`)
     pbmcp.exe scan <html> [<library> <relfile>]    parse one command page as JSON (test utility)
+    pbmcp.exe scan-batch <manifest.json>           parse command pages in one process
     pbmcp.exe test <file>                          replay a golden .jsonl session (test runner)
     pbmcp.exe http --port 6817 --auth-file <path>  authenticated loopback HTTP (see [HTTP transport](#http-transport))
 
@@ -257,11 +250,17 @@ Protocol: MCP over stdio — JSON-RPC 2.0, newline-framed UTF-8,
 `2025-03-26`; the optional HTTP mode speaks stateless Streamable HTTP with
 `2025-11-25`.
 
+The batch scanner takes a UTF-8 JSON array of objects with non-empty `path`,
+`library`, and `file` strings. It emits one command JSON line per entry, in input
+order, and exits nonzero on an invalid manifest or unreadable page. The index
+builder creates and removes its own manifest; the single-page `scan` mode remains
+available for diagnostics and existing scripts.
+
 ## Environment variables
 
 | Variable                     | Purpose                                                                                                   |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `PUREBASIC_HOME`             | Compiler install dir; discovery takes the newest install it finds otherwise                                |
+| `PUREBASIC_HOME`             | Compiler/help installation; otherwise discovery uses the first valid default location                       |
 | `PUREBASIC_MCP_INDEX`        | Pin an explicit docs index file (overrides exe-dir/embedded discovery)                                     |
 | `PUREBASIC_MCP_METRICS`      | Redirect the JSONL metrics file                                                                            |
 | `PUREBASIC_MCP_NO_METRICS=1` | Disable metrics writes entirely                                                                            |
@@ -283,19 +282,34 @@ compile-checked tool-compatible but not part of the test matrix.
   keyed on major version with conservative defaults for unknown versions.
   `pb_version` (tool) and `pbmcp[.exe] version` (CLI) surface the detected
   version.
-- **Docs index**: one index per help version; the newest `index*.json` next to
-  the exe wins, so switching help versions is a file copy — no config change,
-  no restart beyond the client reconnect.
+- **Docs index**: source builds generate it from the selected installation and
+  check its version against the compiler. Rebuild after upgrading PureBasic.
+  Runtime drop-in indexes and `PUREBASIC_MCP_INDEX` remain explicit ways to use
+  another reference; `pb_version` reports both versions separately.
 
 ## Docs index
 
-The index source is the official rendered documentation at
-`https://www.purebasic.com/documentation/`.
+The default build source is the selected installation's local manual. The index
+records the help path and content hash, compiler identity/version, and parser
+fingerprint. It is generated at build time; the server needs no extractor or
+Node runtime and does not reindex during MCP requests.
 
-- Command entries are parsed by the shipped binary itself (`pbmcp[.exe] scan`,
-  one process per page).
-- Reference pages are found by a fixpoint crawl (the root index links further
-  pages); the user-guide and migration pages are recovered this way.
+The online mirror remains available for deliberately building a different
+reference. It is not used by the automatic source build:
+
+    node tools/fetch-online-docs.mjs tmp/online-docs
+    node tools/build-online-index.mjs tmp/online-docs --out index-online.json --pb-version online
+
+- Command entries are parsed by the shipped binary itself in one `scan-batch`
+  process per index build. Command records and ranking stay compatible with
+  single-page scanning.
+- The optional online mirror finds reference pages by a fixpoint crawl; the
+  installed help is indexed directly without downloading pages.
+- An optional `referenceText` map stores cleaned reference bodies once per file;
+  keyword and constant aliases share those bodies. HTML decoration is removed,
+  code examples retain line breaks/indentation, and `pb_command` caps the answer
+  using its existing 14,000-character content limit. Command-target aliases reuse
+  the indexed command documentation. Legacy indexes still resolve to a source URL.
 - `purebasicVersion` is `"online"` when built with `--pb-version online` —
   the site carries no version marker; `source` records the URL and crawl
   timestamp for auditability.
@@ -304,6 +318,12 @@ The index source is the official rendered documentation at
 
 Without any index the server starts and `pb_check` / `pb_run` work
 untouched — only the docs tools report the missing-index hint.
+
+Index discovery order is an explicit `PUREBASIC_MCP_INDEX`, the newest
+`index*.json` beside the executable (including packaged `index.json`), the
+embedded index, then the newest `index*.json` in the cache directory if the
+embedded index is invalid or empty. An explicitly selected file or drop-in
+that is invalid or empty reports an error instead of silently switching versions.
 
 ## Tests
 
@@ -316,20 +336,27 @@ untouched — only the docs tools report the missing-index hint.
 Set `PBMCP_EXE` to test a build elsewhere (e.g. `test/out_version/`) — the
 repo-root exe is locked while a live server runs on it.
 
+Documentation assertions use `test/fixtures/docs-index.json`, independently of
+the embedded index or user cache; `PUREBASIC_MCP_INDEX` can select another index
+explicitly. The suite also runs controlled index-discovery builds, compiler
+include/resource and latency regressions, stdio failure/timeout tests, and a
+local HTTP crawler fixture. Installed-help tests check version validation,
+cache invalidation, warm reuse, bootstrap scanning, and failure preservation.
+The suite does not download the live documentation.
+
 Highlights: 7-byte dribble stress cutting UTF-8 chars across stdin chunk
 boundaries, byte-exact error paths, pb_run timeout/orphan/cleanup gates,
-and missing-index UX paths. Set `PUREBASIC_HOME` to the 6.40 install to
-exercise the primary branch.
+and missing-index UX paths. Set `PUREBASIC_HOME` to the installation to test.
 
 ## Layout
 
-    src/main.pb        entry, arg parse (serve | http | version | scan | test)
+    src/main.pb        entry, arg parse (serve | http | scan | scan-batch | test | version)
     src/console.pb     WriteLine (UTF-8, LF-framed), RunFile, byte-level RunStdin
     src/jsonrpc.pb     request parse, response/error builders, transport sink, id copy
     src/config.pb      PB home discovery, /VERSION detect, capability flags, cache dir
     src/metrics.pb     JSONL metrics (frozen record shape), error-bucket classifier
     src/docs_index.pb  docs index cache + search + lookup + did-you-mean
-    src/html_scan.pb   native HTML scanner + `scan` mode
+    src/html_scan.pb   native HTML scanner + single-page/batch scan modes
     src/pbdocs-index.json   embedded docs index (DataSection; placeholder = empty valid index)
     src/tool_check.pb  shared compiler pipeline (staging, spawn/capture, diagnostics) + pb_check
     src/tool_run.pb    pb_run (staged compile/run, timeout, tree-kill)
@@ -339,7 +366,8 @@ exercise the primary branch.
     tools/lint_encoding.sh    build-time encoding gate (Linux; same BOM rule)
     build.sh / make-dist.sh   Linux build + packaging (build.cmd / make-dist.cmd ports)
     tools/fetch-online-docs.mjs   mirror the official online docs
-    tools/build-online-index.mjs  frozen-schema docs index from a docs tree
+    tools/build-online-index.mjs  docs index + shared reference text from a docs tree
+    tools/build-local-index.mjs   matching installed-help index + content cache
     test/sessions/     golden sessions replayed by `pbmcp.exe test`
 
 ## Source-encoding rule

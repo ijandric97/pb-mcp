@@ -1,5 +1,93 @@
 # Changelog
 
+## Unreleased — 2026-11-08
+
+### Added
+
+- Automatic build-time documentation matching. Windows and Linux builds generate
+  the embedded index from the help in the selected compiler's installation and
+  verify the manual's version independently against the compiler version.
+- A local index builder that extracts Windows CHM help or reads installed HTML
+  help, compiles a temporary batch scanner, and records compiler/help provenance.
+  Missing, unknown, or mismatched help fails the build. Failed generation leaves
+  the previous index intact.
+- Content-based index caching. Unchanged compiler, help, and parser inputs reuse
+  the existing index without extraction, rescanning, or rewriting it.
+- A `scan-batch <manifest.json>` CLI mode that parses command pages in one native
+  process, preserving the existing single-page scanner's records and ordering.
+- An optional `referenceText` map with one local body per reference file. Reference
+  titles, language keywords, and constant aliases return local documentation;
+  command-target aliases reuse their indexed command documentation. Responses
+  retain source URLs and the existing 14,000-character limit. Legacy indexes keep
+  their URL fallback.
+- Regression coverage for compiler/include behavior, preload and index discovery,
+  process and pipe lifecycle, batch scanning, crawler failures, and local-help
+  version validation and caching.
+
+### Changed
+
+- Documentation guidance now uses `pb_command` directly for known names, reserves
+  search for discovery, reuses previous lookups, and checks coherent edit batches.
+- The companion skill uses the project's explicit target or installed compiler
+  instead of always targeting PureBasic 6.40.
+- `pb_check` reports total handler processing time, including source analysis;
+  metrics use the same complete processing boundary.
+- Source builds now require Node.js and the selected installation's help.
+  Windows tries `hh.exe` and falls back to 7-Zip for CHM extraction. The packaged
+  native server still needs neither Node.js nor an extractor at runtime.
+- The embedded documentation was regenerated from the installed PureBasic 6.41
+  help: 1,888 commands, 1,949 reference entries, and 103 unique reference bodies.
+  Both the compiler and documentation now report 6.41 in the rebuilt artifacts.
+
+### Fixed
+
+- Windows builds and both platforms' syntax checks enable the thread-safe runtime
+  required by background documentation preload. The entry point rejects builds
+  that omit this setting.
+- Relative paths containing leading or nested `..` resolve correctly above the
+  server's working directory on Windows and Linux.
+- Documentation discovery accepts packaged `index.json` as well as versioned
+  `index*.json` files. An unusable embedded index can fall back to the user cache;
+  invalid explicit or drop-in indexes retain their own diagnostics.
+- Compiler checks and console builds compile the original source path, preserving
+  relative includes, binary resources, and compiler file/path constants while
+  isolating generated output in temporary storage.
+- Unsupported quote/newline arguments and NUL-containing JSON strings are rejected
+  before they can be silently altered. Empty, tab-containing, spaced, and trailing
+  backslash arguments retain their values.
+- Online reference crawling tolerates HTTP 404/410 links while reporting exhausted
+  network and server failures. Failed refreshes invalidate old success manifests;
+  missing reference pages remove their stale local copies.
+- Local-help indexing handles reference folder casing and the installed manual's
+  keyword styling. Command coverage failures stop generation before replacing an
+  existing index.
+- Acceptance tests use a controlled documentation fixture instead of depending on
+  the developer's cache. Child-process failures, early exits, EPIPE, stream closure,
+  timers, and timeouts produce explicit outcomes and clean up correctly.
+
+### Performance
+
+- Source linting scans lines and strings linearly. A 50,000-line fixture decreased
+  from approximately 3.4 seconds to 0.11 seconds on the tested Windows setup.
+- Batch indexing of the existing documentation mirror decreased from 31,366 ms to
+  981 ms, approximately 32 times faster, with structurally identical command and
+  reference records for that comparison.
+
+### Validation
+
+- Windows packaged acceptance suite: **161 passed, 0 failed**, including the
+  preload/path/index regression group and installed-help integration checks.
+- Native thread-safe syntax check, UTF-8 BOM lint, root build, and distribution
+  build passed with PureBasic 6.41.
+- Packaged RPC lookups verified local `CompilerIf` text, the installed `OpenWindow`
+  signature, and a command-target constant alias. Package files and the recorded
+  CHM content hash matched their sources. The restarted client confirmed matching
+  compiler/documentation versions and a working reference lookup.
+- Native Linux execution and a live online crawl were not rerun. HTML help layout
+  and version handling use local fixtures; crawler tests use a local HTTP server.
+- Matching occurs during builds. Rebuild after upgrading or changing the compiler
+  installation; explicit runtime index overrides can still select another version.
+
 Notable changes to pbmcp. The server version lives in `src/jsonrpc.pb`
 (`#SERVER_VERSION$`); every rebuild stamps its compile date automatically
 (`pbmcp version` / the `pb_version` tool report both).
