@@ -46,6 +46,44 @@ assert.equal(partial.status, 1);
 assert.equal(partial.stdout.trim().split(/\r?\n/).length, 1, 'batch continued after an unreadable page');
 assert.match(partial.stderr, /cannot open HTML file/);
 
+// Exercise every formerly fixed-size collection, then a small page in the same batch.
+const section = (name, body) => `<html><title>Boundary</title><body><p><b>${name}</b></p>${body}</body></html>`;
+const sequence = (count, render) => Array.from({ length: count }, (_, i) => render(i + 1)).join('');
+const boundaries = [
+  ['syntax', section('Syntax', '<pre>' + sequence(1025, i => `Test${i}()\n`) + '</pre>'), record => {
+    assert.equal(record.syntax.length, 1025); assert.equal(record.syntax.at(-1), 'Test1025()');
+  }],
+  ['description', section('Description', sequence(1025, i => `<p>Block${i}</p>`)), record => {
+    assert.ok(record.description.startsWith('Block1')); assert.ok(record.description.endsWith('Block1025'));
+  }],
+  ['parameters', section('Parameters', '<table>' + sequence(4097, i => `<tr><td>p${i}</td><td>value${i}</td></tr>`) + '</table>'), record => {
+    assert.equal(record.parameters.length, 4097); assert.deepEqual(record.parameters.at(-1), { name: 'p4097', description: 'value4097' });
+  }],
+  ['tables', section('Parameters', '<blockquote>' + sequence(1025, i => `<table><tr><td>p${i}</td><td>value</td></tr></table>`) + '</blockquote>'), record => {
+    assert.equal(record.parameters.length, 1025); assert.equal(record.parameters.at(-1).name, 'p1025');
+  }],
+  ['related', section('See Also', '<p>' + sequence(1025, i => `<a href="test${i}.html">Test${i}()</a> `) + '</p>'), record => {
+    assert.equal(record.seeAlso.length, 1025); assert.equal(record.seeAlso.at(-1), 'Test1025');
+  }],
+  ['examples', section('Example', sequence(4097, i => `<pre>Debug ${i}</pre>`)), record => {
+    assert.ok(record.example.startsWith('Debug 1')); assert.ok(record.example.endsWith('Debug 4097'));
+  }],
+  ['os', section('Supported OS', '<p>' + sequence(1025, i => `OS${i}, `) + '</p>'), record => {
+    assert.equal(record.os.length, 1025); assert.equal(record.os.at(-1), 'OS1025');
+  }],
+];
+const boundaryPages = boundaries.map(([name, html]) => {
+  const path = join(scratch, name + '.html');
+  writeFileSync(path, html);
+  return { path, library: 'Test', file: name + '.html' };
+});
+const boundaryScan = batch([...boundaryPages, pages[0]]);
+assert.equal(boundaryScan.status, 0, boundaryScan.stderr);
+const boundaryRecords = boundaryScan.stdout.trim().split(/\r?\n/).map(JSON.parse);
+assert.equal(boundaryRecords.length, boundaries.length + 1);
+boundaries.forEach(([, , check], i) => check(boundaryRecords[i]));
+assert.deepEqual(boundaryRecords.at(-1), JSON.parse(records[0]), 'large page leaked state into the next page');
+
 const docs = join(scratch, 'docs');
 mkdirSync(join(docs, 'window'), { recursive: true });
 const referenceDir = join(docs, 'Reference');
@@ -115,6 +153,12 @@ const commandIndex = readFileSync(join(referenceDir, 'commandindex.html'));
 writeFileSync(join(referenceDir, 'commandindex.html'), '<a href="../window/absent.html">AbsentCommand</a>');
 assert.notEqual(build().status, 0);
 assert.deepEqual(readFileSync(output), previous, 'coverage failure replaced the working index');
+writeFileSync(join(referenceDir, 'commandindex.html'), commandIndex);
+writeFileSync(join(referenceDir, 'commandindex.html'), '<html>Maintenance</html>');
+const emptyCoverage = build();
+assert.notEqual(emptyCoverage.status, 0);
+assert.match(emptyCoverage.stderr, /No commands found/);
+assert.deepEqual(readFileSync(output), previous, 'empty coverage replaced the working index');
 writeFileSync(join(referenceDir, 'commandindex.html'), commandIndex);
 const fault = join(scratch, 'write-failure.cjs');
 writeFileSync(fault, `const fs = require('node:fs');

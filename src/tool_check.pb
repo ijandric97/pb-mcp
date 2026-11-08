@@ -43,8 +43,8 @@ EnableExplicit
 #COMPILE_TIMEOUT_MS = 30000
 #DEFAULT_RUN_TIMEOUT_MS = 15000
 #MAX_RUN_TIMEOUT_MS = 60000
-#MAX_CAPTURE_CHARS = 4194304   ; 4 MB capture guard per stream
-#STDERR_SPIN_MS = 5            ; poll flat out this long after a stderr line
+#MAX_CAPTURE_CHARS = 4194304   ; 4 MB byte capture guard per stream
+#CAPTURE_SPIN_MS = 5           ; poll flat out briefly after output arrives
 
 ; JS String.trim(): PB Trim/LTrim/RTrim accept one character, not a set.
 Procedure.s TrimAll(Text$)
@@ -346,6 +346,7 @@ EndStructure
 #PBMCP_JOB_EXTENDED_LIMITS = 9
 #PBMCP_JOB_KILL_ON_CLOSE = $2000
 #PBMCP_JOB_ASSIGN_PROCESS = 1
+#PBMCP_HANDLE_INHERIT = 1
 
 ; The worker joins the job before starting user code. The server alone owns
 ; the job handle, so server exit also terminates every contained process.
@@ -360,8 +361,9 @@ Procedure.i RunJobWorker()
   CloseHandle_(job)
   Protected started.i = OpenEvent_(#EVENT_MODIFY_STATE, #False, @eventName$)
   If started = 0 : ProcedureReturn 1 : EndIf
-  Protected command$ = ProcQ(ProgramParameter(2)), k.i
-  For k = 3 To CountProgramParameters() - 1
+  Protected errorWriter.i = Val(ProgramParameter(2))
+  Protected command$ = ProcQ(ProgramParameter(3)), k.i
+  For k = 4 To CountProgramParameters() - 1
     command$ + " " + ProcQ(ProgramParameter(k))
   Next
   Protected startup.STARTUPINFO, child.PROCESS_INFORMATION, exitCode.l = 1
@@ -370,8 +372,9 @@ Procedure.i RunJobWorker()
   startup\wShowWindow = #SW_HIDE
   startup\hStdInput = GetStdHandle_(#STD_INPUT_HANDLE)
   startup\hStdOutput = GetStdHandle_(#STD_OUTPUT_HANDLE)
-  startup\hStdError = GetStdHandle_(#STD_ERROR_HANDLE)
+  startup\hStdError = errorWriter
   If CreateProcess_(0, @command$, 0, 0, #True, #CREATE_NO_WINDOW, 0, 0, @startup, @child)
+    CloseHandle_(errorWriter)
     SetEvent_(started)
     CloseHandle_(started)
     CloseHandle_(child\hThread)
@@ -379,6 +382,7 @@ Procedure.i RunJobWorker()
     GetExitCodeProcess_(child\hProcess, @exitCode)
     CloseHandle_(child\hProcess)
   Else
+    CloseHandle_(errorWriter)
     CloseHandle_(started)
   EndIf
   ProcedureReturn exitCode
@@ -390,8 +394,17 @@ ImportC ""
   ProcessParentPid() As "getppid"
   ProcessSetSignal(signal.l, *handler) As "signal"
   ProcessParentDeath(option.l, signal.i, arg3.i, arg4.i, arg5.i) As "prctl"
+  ProcessPipe(*fds) As "pipe"
+  ProcessPipeFlags(fd.l, command.l, value.l) As "fcntl"
+  ProcessPipeRead(fd.l, *buffer, bytes.i) As "read"
+  ProcessPipeClose(fd.l) As "close"
+  ProcessPipeDup(fd.l, target.l) As "dup2"
 EndImport
 #PBMCP_PR_SET_PDEATHSIG = 1
+#PBMCP_F_SETFD = 2
+#PBMCP_F_SETFL = 4
+#PBMCP_FD_CLOEXEC = 1
+#PBMCP_O_NONBLOCK = 2048
 
 ; setsid gives each run its own group, including descendants whose parent exits.
 Procedure KillTree(Pid.i)
@@ -411,12 +424,15 @@ Procedure.i RunJobWorker()
     RunParentExited(15)
     ProcedureReturn 1
   EndIf
+  Protected errorWriter.i = Val(ProgramParameter(2))
+  If ProcessPipeDup(errorWriter, 2) < 0 : ProcedureReturn 1 : EndIf
+  If errorWriter <> 2 : ProcessPipeClose(errorWriter) : EndIf
   Protected params$ = "", k.i
-  For k = 3 To CountProgramParameters() - 1
-    If k > 3 : params$ + " " : EndIf
+  For k = 4 To CountProgramParameters() - 1
+    If k > 4 : params$ + " " : EndIf
     params$ + ProcQ(ProgramParameter(k))
   Next
-  Protected p.i = RunProgram(ProgramParameter(2), params$, GetCurrentDirectory(), #PB_Program_Open | #PB_Program_Hide)
+  Protected p.i = RunProgram(ProgramParameter(3), params$, GetCurrentDirectory(), #PB_Program_Open | #PB_Program_Hide)
   If p = 0 : ProcedureReturn 1 : EndIf
   WaitProgram(p)
   Protected exitCode.i = ProgramExitCode(p)
@@ -425,22 +441,88 @@ Procedure.i RunJobWorker()
 EndProcedure
 CompilerEndIf
 
-Procedure CaptureErrorLine(Line$, List Lines$(), *Count.Integer, *Truncated.Integer)
-  ; shortcut: ReadProgramError allocates a full line; use raw pipe reads if peak memory needs a strict cap.
-  Protected remaining.i = #MAX_CAPTURE_CHARS - *Count\i
-  If Len(Line$) + 1 > remaining : *Truncated\i = #True : EndIf
-  If remaining > 0
-    AddElement(Lines$())
-    Lines$() = Left(Line$, remaining - 1)
-    *Count\i + Len(Lines$()) + 1
+Structure ErrorPipeT
+  reader.i
+  writer.i
+EndStructure
+
+Procedure CloseErrorPipe(Handle.i)
+  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+    CloseHandle_(Handle)
+  CompilerElse
+    ProcessPipeClose(Handle)
+  CompilerEndIf
+EndProcedure
+
+Procedure.i OpenErrorPipe(*pipe.ErrorPipeT)
+  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+    Protected attributes.SECURITY_ATTRIBUTES
+    attributes\nLength = SizeOf(SECURITY_ATTRIBUTES)
+    attributes\bInheritHandle = #True
+    If CreatePipe_(@*pipe\reader, @*pipe\writer, @attributes, 0) = 0 : ProcedureReturn #False : EndIf
+    If SetHandleInformation_(*pipe\reader, #PBMCP_HANDLE_INHERIT, 0) : ProcedureReturn #True : EndIf
+  CompilerElse
+    Protected Dim fds.l(1)
+    If ProcessPipe(@fds(0)) <> 0 : ProcedureReturn #False : EndIf
+    *pipe\reader = fds(0) : *pipe\writer = fds(1)
+    If ProcessPipeFlags(*pipe\reader, #PBMCP_F_SETFL, #PBMCP_O_NONBLOCK) = 0 And ProcessPipeFlags(*pipe\reader, #PBMCP_F_SETFD, #PBMCP_FD_CLOEXEC) = 0
+      ProcedureReturn #True
+    EndIf
+  CompilerEndIf
+  CloseErrorPipe(*pipe\reader)
+  CloseErrorPipe(*pipe\writer)
+  ProcedureReturn #False
+EndProcedure
+
+Procedure.i ReadErrorPipe(Handle.i, *Buffer, Size.i)
+  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+    Protected available.l, bytes.l
+    If PeekNamedPipe_(Handle, 0, 0, 0, @available, 0) = 0 Or available <= 0 : ProcedureReturn 0 : EndIf
+    If Size > available : Size = available : EndIf
+    If ReadFile_(Handle, *Buffer, Size, @bytes, 0) : ProcedureReturn bytes : EndIf
+  CompilerElse
+    Protected bytes.i = ProcessPipeRead(Handle, *Buffer, Size)
+    If bytes > 0 : ProcedureReturn bytes : EndIf
+  CompilerEndIf
+  ProcedureReturn 0
+EndProcedure
+
+Structure CaptureT
+  *data
+  length.i
+  capacity.i
+  truncated.i
+EndStructure
+
+Procedure CaptureBytes(*capture.CaptureT, *Buffer, Bytes.i)
+  If Bytes > #MAX_CAPTURE_CHARS - *capture\length
+    Bytes = #MAX_CAPTURE_CHARS - *capture\length
+    *capture\truncated = #True
   EndIf
+  If Bytes <= 0 : ProcedureReturn : EndIf
+  If *capture\length + Bytes > *capture\capacity
+    Protected capacity.i = (*capture\length + Bytes) * 2, *grown
+    If capacity < 65536 : capacity = 65536 : EndIf
+    If capacity > #MAX_CAPTURE_CHARS : capacity = #MAX_CAPTURE_CHARS : EndIf
+    If *capture\data
+      *grown = ReAllocateMemory(*capture\data, capacity)
+    Else
+      *grown = AllocateMemory(capacity)
+    EndIf
+    If *grown = 0
+      *capture\truncated = #True
+      ProcedureReturn
+    EndIf
+    *capture\data = *grown
+    *capture\capacity = capacity
+  EndIf
+  CopyMemory(*Buffer, *capture\data + *capture\length, Bytes)
+  *capture\length + Bytes
 EndProcedure
 
 ; runProcess port: spawn without shell, capture stdout/stderr, enforce the
-; timeout, kill the tree on timeout. Stdout is captured as raw bytes and
-; decoded UTF-8 once at the end (a multibyte char can never split across two
-; ReadProgramData calls this way). Stderr uses ReadProgramError, which never
-; blocks - the polling loop can always reach its timeout check.
+; timeout, kill the tree on timeout. Both streams use bounded byte reads and
+; decode UTF-8 once, so long lines cannot delay deadlines or grow without limit.
 Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
   *r\spawnFailed = #False
   *r\exitCodeUnknown = #False
@@ -449,11 +531,21 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
   *r\stderr = ""
   *r\timedOut = #False
   Protected t0.i = ElapsedMilliseconds()
-  Protected p.i
+  Protected p.i, errorPipe.ErrorPipeT
+  Protected *scratch = AllocateMemory(65536)
+  If *scratch = 0
+    *r\spawnFailed = #True
+    ProcedureReturn
+  EndIf
+  If OpenErrorPipe(@errorPipe) = #False
+    FreeMemory(*scratch)
+    *r\spawnFailed = #True
+    ProcedureReturn
+  EndIf
   CompilerIf #PB_Compiler_OS = #PB_OS_Linux
     ; The worker leads the group and kills it if the server exits.
-    p = RunProgram("setsid", ProcQ(ProgramFilename()) + " --job-worker " + Str(ProcessOwnPid()) + " " + ProcQ(Exe$) + " " + Params$, WorkingDir$,
-                   #PB_Program_Open | #PB_Program_Read | #PB_Program_Error | #PB_Program_Hide)
+    p = RunProgram("setsid", ProcQ(ProgramFilename()) + " --job-worker " + Str(ProcessOwnPid()) + " " + Str(errorPipe\writer) + " " + ProcQ(Exe$) + " " + Params$, WorkingDir$,
+                   #PB_Program_Open | #PB_Program_Read | #PB_Program_Hide)
   CompilerElse
     Protected jobName$ = "Local\pbmcp-" + Str(GetCurrentProcessId_()) + "-" + Str(ElapsedMilliseconds()) + "-" + Str(Random(2147483647))
     Protected eventName$ = jobName$ + "-started"
@@ -464,13 +556,16 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
       If JobSetLimits(job, #PBMCP_JOB_EXTENDED_LIMITS, @limits, SizeOf(limits))
         started = CreateEvent_(0, #True, #False, @eventName$)
         If started And GetLastError_() <> #ERROR_ALREADY_EXISTS
-          p = RunProgram(ProgramFilename(), "--job-worker " + ProcQ(jobName$) + " " + ProcQ(Exe$) + " " + Params$, WorkingDir$,
-                         #PB_Program_Open | #PB_Program_Read | #PB_Program_Error | #PB_Program_Hide)
+          p = RunProgram(ProgramFilename(), "--job-worker " + ProcQ(jobName$) + " " + Str(errorPipe\writer) + " " + ProcQ(Exe$) + " " + Params$, WorkingDir$,
+                         #PB_Program_Open | #PB_Program_Read | #PB_Program_Hide)
         EndIf
       EndIf
     EndIf
   CompilerEndIf
+  CloseErrorPipe(errorPipe\writer)
   If p = 0
+    CloseErrorPipe(errorPipe\reader)
+    FreeMemory(*scratch)
     CompilerIf #PB_Compiler_OS = #PB_OS_Windows
       If started : CloseHandle_(started) : EndIf
       If job : CloseHandle_(job) : EndIf
@@ -480,19 +575,9 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
     ProcedureReturn
   EndIf
 
-  ; stdout accumulator (grows on demand; 4 MB cap with truncation marker)
-  Protected cap.i = 65536
-  Protected *acc = AllocateMemory(cap)
-  Protected accLen.i = 0, outTruncated.i = #False, errTruncated.i = #False
-  Protected *scratch = AllocateMemory(65536)
-  Protected killIssued.i = #False, n.i, available.i, drains.i, e$, panicAt.i = TimeoutMs + 10000
-  Protected gotErr.i, lastErrMs.i = -1000   ; last poll cycle that collected stderr
-  Protected newCap.i, newAcc   ; staged grow: only applied to *acc/cap on success
-  ; stderr lines: joined ONCE after the final drain (a per-line *r\stderr
-  ; append copies the whole accumulator each time - quadratic in bytes);
-  ; errChars mirrors what a mid-run Len(*r\stderr) would have been.
-  NewList errLines$()
-  Protected errChars.i = 0
+  Protected output.CaptureT, errors.CaptureT
+  Protected killIssued.i = #False, n.i, available.i, drains.i, panicAt.i = TimeoutMs + 10000
+  Protected lastOutputMs.i = -1000
 
   While ProgramRunning(p)
     ; 6.40 ReadProgramData waits for the requested SIZE, contrary to the
@@ -506,50 +591,15 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
       n = ReadProgramData(p, *scratch, available)
       drains + 1
       If n <= 0 : Break : EndIf
-      If accLen + n > #MAX_CAPTURE_CHARS
-        n = #MAX_CAPTURE_CHARS - accLen
-        If n > 0
-          If accLen + n > cap
-            newCap = (accLen + n) * 2
-            newAcc = ReAllocateMemory(*acc, newCap)
-            If newAcc
-              *acc = newAcc
-              cap = newCap
-            EndIf
-          EndIf
-          If accLen + n <= cap   ; false after a failed grow - skip the copy
-            CopyMemory(*scratch, *acc + accLen, n)
-            accLen + n
-          EndIf
-        EndIf
-        outTruncated = #True
-        Break
-      EndIf
-      If accLen + n > cap
-        newCap = (accLen + n) * 2
-        newAcc = ReAllocateMemory(*acc, newCap)
-        If newAcc = 0
-          ; Grow failed (OOM): ReAllocateMemory's contract keeps the
-          ; ORIGINAL block valid at the old size, and cap (assigned only on
-          ; success) still matches it - drop this read (already consumed
-          ; from the pipe), mark truncated, stop draining this poll.
-          outTruncated = #True
-          Break
-        EndIf
-        *acc = newAcc
-        cap = newCap
-      EndIf
-      CopyMemory(*scratch, *acc + accLen, n)
-      accLen + n
+      CaptureBytes(@output, *scratch, n)
+      lastOutputMs = ElapsedMilliseconds()
     Wend
-    ; drain stderr (ReadProgramError never halts)
-    gotErr = #False
-    While #True
-      e$ = ReadProgramError(p)
-      If e$ = "" : Break : EndIf
-      gotErr = #True
-      CaptureErrorLine(e$, errLines$(), @errChars, @errTruncated)
-    Wend
+    For drains = 1 To 64
+      n = ReadErrorPipe(errorPipe\reader, *scratch, 65536)
+      If n <= 0 : Break : EndIf
+      CaptureBytes(@errors, *scratch, n)
+      lastOutputMs = ElapsedMilliseconds()
+    Next
 
     If killIssued = #False And ElapsedMilliseconds() - t0 >= TimeoutMs
       *r\timedOut = #True
@@ -565,14 +615,7 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
       *r\exitCodeUnknown = #True   ; unkillable past the panic backstop
       Break
     EndIf
-    If gotErr : lastErrMs = ElapsedMilliseconds() : EndIf
-    ; Sleep between polls ONLY while stderr has been quiet. The child's next
-    ; stderr write blocks until we read (PB's stderr pipe does not buffer
-    ; ahead), so a fixed sleep locks the drain to one line per sleep (~20 ms
-    ; on Windows) - an 80k-line flood needed ~28 min that way. While a line
-    ; arrived within #STDERR_SPIN_MS, keep polling flat out; quiet runs keep
-    ; the old 15 ms pace. Output-preserving: only drain scheduling changes.
-    If killIssued = #False And ElapsedMilliseconds() - lastErrMs >= #STDERR_SPIN_MS
+    If killIssued = #False And ElapsedMilliseconds() - lastOutputMs >= #CAPTURE_SPIN_MS
       Delay(15)
     EndIf
   Wend
@@ -593,67 +636,31 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
     If available <= 0 : Break : EndIf
     n = ReadProgramData(p, *scratch, available)
     If n <= 0 : Break : EndIf
-    If accLen + n > #MAX_CAPTURE_CHARS
-      n = #MAX_CAPTURE_CHARS - accLen
-      outTruncated = #True
-    EndIf
-    If n > 0
-      If accLen + n > cap
-        newCap = (accLen + n) * 2
-        newAcc = ReAllocateMemory(*acc, newCap)
-        If newAcc
-          *acc = newAcc
-          cap = newCap
-        Else
-          ; OOM as in the poll loop: original block stays valid, cap still
-          ; matches it - skip the copy (read already consumed), mark truncated.
-          outTruncated = #True
-        EndIf
-      EndIf
-      If accLen + n <= cap   ; false after a failed grow - skip the copy
-        CopyMemory(*scratch, *acc + accLen, n)
-        accLen + n
-      EndIf
-    EndIf
+    CaptureBytes(@output, *scratch, n)
   Wend
   While #True
-    e$ = ReadProgramError(p)
-    If e$ = "" : Break : EndIf
-    CaptureErrorLine(e$, errLines$(), @errChars, @errTruncated)
+    n = ReadErrorPipe(errorPipe\reader, *scratch, 65536)
+    If n <= 0 : Break : EndIf
+    CaptureBytes(@errors, *scratch, n)
   Wend
-
-  ; one linear join of the collected lines - same layout as the old
-  ; accumulator: every line followed by one LF. PeekS's Length is in
-  ; characters for #PB_Unicode (6.40 reference); PokeS returns BYTES
-  ; written, so the walk advances by its return value.
-  If errChars > 0
-    Protected *ebuf = AllocateMemory(errChars * SizeOf(Character) + SizeOf(Character))
-    If *ebuf
-      Protected eoff.i = 0
-      ForEach errLines$()
-        eoff + PokeS(*ebuf + eoff, errLines$() + Chr(10), -1, #PB_Unicode | #PB_String_NoZero)
-      Next
-      *r\stderr = PeekS(*ebuf, errChars, #PB_Unicode)
-      FreeMemory(*ebuf)
-    Else
-      errTruncated = #True     ; OOM: stderr dropped, marker shows why
-    EndIf
-  EndIf
+  CloseErrorPipe(errorPipe\reader)
 
   If *r\exitCodeUnknown
     *r\exitCode = -1
   Else
     *r\exitCode = ProgramExitCode(p)
   EndIf
-  If accLen > 0
+  If output\length > 0
     ; UTF-8 decode is deliberate: correct on CP65001 consoles (and Linux),
     ; may yield U+FFFD elsewhere; #PB_Ascii rejected (breaks CP65001).
-    *r\stdout = PeekS(*acc, accLen, #PB_UTF8 | #PB_ByteLength)
+    *r\stdout = PeekS(output\data, output\length, #PB_UTF8 | #PB_ByteLength)
   EndIf
-  If outTruncated : *r\stdout + Chr(10) + "…[stdout truncated at 4 MB]" : EndIf
-  If errTruncated : *r\stderr + Chr(10) + "…[stderr truncated at 4 MB]" : EndIf
+  If errors\length > 0 : *r\stderr = ReplaceString(PeekS(errors\data, errors\length, #PB_UTF8 | #PB_ByteLength), Chr(13), "") : EndIf
+  If output\truncated : *r\stdout + Chr(10) + "…[stdout truncated at 4 MB]" : EndIf
+  If errors\truncated : *r\stderr + Chr(10) + "…[stderr truncated at 4 MB]" : EndIf
   *r\durationMs = ElapsedMilliseconds() - t0
-  FreeMemory(*acc)
+  If output\data : FreeMemory(output\data) : EndIf
+  If errors\data : FreeMemory(errors\data) : EndIf
   FreeMemory(*scratch)
   CloseProgram(p)
 EndProcedure

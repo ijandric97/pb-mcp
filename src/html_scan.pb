@@ -437,8 +437,11 @@ Procedure.i HtmlMarker(Node.i)
 EndProcedure
 
 Procedure HtmlSectionPush(Section.i, Node.i)
-  If Section > 0 And Section <= 8 And gHtmlSectionCount(Section) < 1024
+  If Section > 0 And Section <= 8
     gHtmlSectionCount(Section) + 1
+    If gHtmlSectionCount(Section) > ArraySize(gHtmlSection(), 2)
+      ReDim gHtmlSection(8, gHtmlSectionCount(Section) * 2)
+    EndIf
     gHtmlSection(Section, gHtmlSectionCount(Section)) = Node
   EndIf
 EndProcedure
@@ -520,8 +523,10 @@ Procedure HtmlNormalizeOs(Raw$)
       For osIndex = 1 To gHtmlOsCount
         If LCase(gHtmlOs$(osIndex)) = LCase(part$) : duplicate = #True : Break : EndIf
       Next
-      If Not duplicate And gHtmlOsCount < 100
-        gHtmlOsCount + 1 : gHtmlOs$(gHtmlOsCount) = part$
+      If Not duplicate
+        gHtmlOsCount + 1
+        If gHtmlOsCount > ArraySize(gHtmlOs$()) : ReDim gHtmlOs$(gHtmlOsCount * 2) : EndIf
+        gHtmlOs$(gHtmlOsCount) = part$
       EndIf
     EndIf
   Next
@@ -576,7 +581,9 @@ Procedure HtmlParseCommand()
           If Right(prev$, 1) = "," Or Right(prev$, 1) = "("
             gHtmlSyntax$(gHtmlSyntaxCount) = prev$ + " " + line$
           Else
-            gHtmlSyntaxCount + 1 : gHtmlSyntax$(gHtmlSyntaxCount) = line$
+            gHtmlSyntaxCount + 1
+            If gHtmlSyntaxCount > ArraySize(gHtmlSyntax$()) : ReDim gHtmlSyntax$(gHtmlSyntaxCount * 2) : EndIf
+            gHtmlSyntax$(gHtmlSyntaxCount) = line$
           EndIf
         Else
           gHtmlSyntaxCount = 1 : gHtmlSyntax$(1) = line$
@@ -592,7 +599,9 @@ Procedure HtmlParseCommand()
   For i = 1 To gHtmlSectionCount(#SCAN_EXAMPLE)
     node = gHtmlSection(#SCAN_EXAMPLE, i)
     If gHtmlNode(node)\tag = "pre"
-      gHtmlFoundCount + 1 : gHtmlFound(gHtmlFoundCount) = node
+      gHtmlFoundCount + 1
+      If gHtmlFoundCount > ArraySize(gHtmlFound()) : ReDim gHtmlFound(gHtmlFoundCount + 512) : EndIf
+      gHtmlFound(gHtmlFoundCount) = node
     EndIf
     HtmlCollect(node, "pre")
   Next
@@ -617,10 +626,12 @@ Procedure HtmlParseCommand()
     EndIf
     Protected k.i, t.i, trCount.i, tdCount.i, tableCount.i
     tableCount = gHtmlFoundCount
+    If tableCount > ArraySize(gHtmlTables()) : ReDim gHtmlTables(tableCount) : EndIf
     For k = 1 To tableCount : gHtmlTables(k) = gHtmlFound(k) : Next
     For k = 1 To tableCount
       table = gHtmlTables(k)
       gHtmlFoundCount = 0 : HtmlCollect(table, "tr") : trCount = gHtmlFoundCount
+      If trCount > ArraySize(gHtmlRows()) : ReDim gHtmlRows(trCount) : EndIf
       For t = 1 To trCount : gHtmlRows(t) = gHtmlFound(t) : Next
       For t = 1 To trCount
         tr = gHtmlRows(t)
@@ -633,6 +644,10 @@ Procedure HtmlParseCommand()
           Next
           desc$ = HtmlTrimAll(HtmlCleanText(desc$))
           gHtmlParameterCount + 1
+          If gHtmlParameterCount > ArraySize(gHtmlParameterName$())
+            ReDim gHtmlParameterName$(gHtmlParameterCount * 2)
+            ReDim gHtmlParameterDescription$(gHtmlParameterCount * 2)
+          EndIf
           gHtmlParameterName$(gHtmlParameterCount) = raw$
           gHtmlParameterDescription$(gHtmlParameterCount) = desc$
         EndIf
@@ -651,7 +666,11 @@ Procedure HtmlParseCommand()
         If name$ <> ""
           Protected found.i = #False, x.i
           For x = 1 To gHtmlSeeCount : If gHtmlSeeAlso$(x) = name$ : found = #True : Break : EndIf : Next
-          If Not found : gHtmlSeeCount + 1 : gHtmlSeeAlso$(gHtmlSeeCount) = name$ : EndIf
+          If Not found
+            gHtmlSeeCount + 1
+            If gHtmlSeeCount > ArraySize(gHtmlSeeAlso$()) : ReDim gHtmlSeeAlso$(gHtmlSeeCount * 2) : EndIf
+            gHtmlSeeAlso$(gHtmlSeeCount) = name$
+          EndIf
         EndIf
       EndIf
     Next

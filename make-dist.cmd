@@ -71,7 +71,6 @@ if exist "%~dp0dist" (
 )
 move "%STAGE%" "%~dp0dist" >nul
 if errorlevel 1 (
-    if exist "%BACKUP%" move "%BACKUP%" "%~dp0dist" >nul
     goto :fail
 )
 set "STAGE_OWNED="
@@ -87,7 +86,10 @@ echo make-dist: could not create a unique staging directory
 exit /b 1
 
 :fail
-if defined BACKUP if exist "%BACKUP%" if not exist "%~dp0dist" move "%BACKUP%" "%~dp0dist" >nul
+if defined BACKUP if exist "%BACKUP%" (
+    if not exist "%~dp0dist" move "%BACKUP%" "%~dp0dist" >nul
+    if exist "%BACKUP%" echo make-dist: previous dist remains at "%BACKUP%"
+)
 if defined STAGE_OWNED if exist "%STAGE%" rmdir /s /q "%STAGE%"
 echo make-dist: assembly FAILED
 exit /b 1

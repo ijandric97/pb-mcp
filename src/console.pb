@@ -7,6 +7,7 @@
 EnableExplicit
 
 Declare HandleLine(Raw$)
+Declare SendError(IdValue.i, Code.i, Message$)
 
 CompilerIf #PB_Compiler_OS = #PB_OS_Linux
 ; Raw read(2) for the stdin loop (see RunStdin) + dup/close for the capture
@@ -103,12 +104,13 @@ EndProcedure
 ; scanning - but a line may START in the old region, hence the absolute
 ; `start` cursor and the one MoveMemory compaction per chunk.
 #STDIN_CHUNK = 65536
+#MAX_FRAME_BYTES = 1048576
 
 Procedure RunStdin()
   Protected cap.i = #STDIN_CHUNK
   Protected *buf = AllocateMemory(cap)
-  If *buf = 0 : End 1 : EndIf   ; same contract as the grow path below
-  Protected len.i = 0, n.i, start.i, i.i, errStreak.i
+  If *buf = 0 : End 1 : EndIf
+  Protected len.i = 0, n.i, start.i, i.i, errStreak.i, discarding.i
   CompilerIf #PB_Compiler_OS = #PB_OS_Linux
     Protected fd.i = gStdinFd      ; the captured stdin (see StdinCapture);
     If fd < 0 : fd = 0 : EndIf     ; uncaptured degenerate case: try fd 0
@@ -116,6 +118,7 @@ Procedure RunStdin()
   Repeat
     If len >= cap
       cap * 2
+      If cap > #MAX_FRAME_BYTES + 1 : cap = #MAX_FRAME_BYTES + 1 : EndIf
       *buf = ReAllocateMemory(*buf, cap)
       If *buf = 0 : End 1 : EndIf
     EndIf
@@ -138,7 +141,13 @@ Procedure RunStdin()
       start = 0
       For i = len - n To len - 1       ; scan new bytes only
         If PeekA(*buf + i) = 10        ; LF: complete line [start .. i)
-          HandleRawLine(*buf + start, i - start)
+          If discarding
+            discarding = #False
+          ElseIf i - start > #MAX_FRAME_BYTES
+            SendError(0, -32600, "Request line exceeds 1048576 bytes")
+          Else
+            HandleRawLine(*buf + start, i - start)
+          EndIf
           start = i + 1
         EndIf
       Next
@@ -146,6 +155,11 @@ Procedure RunStdin()
         MoveMemory(*buf + start, *buf, len - start)
         len - start
       EndIf
+      If len > #MAX_FRAME_BYTES And discarding = #False
+        SendError(0, -32600, "Request line exceeds 1048576 bytes")
+        discarding = #True
+      EndIf
+      If discarding : len = 0 : EndIf
     EndIf
   Until n = 0
   If len > 0 : HandleRawLine(*buf, len) : EndIf  ; last line without LF

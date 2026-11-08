@@ -53,6 +53,18 @@
 
 ### Fixed
 
+- Empty online command discovery and empty coverage now fail before replacing
+  a working documentation mirror or index.
+- Compiler/program stderr uses bounded native byte-pipe reads with a 4 MiB
+  capture limit, so oversized lines and continuous output cannot delay timeout
+  checks. UTF-8 is decoded after capture, preserving split characters and blank lines.
+- HTML scanner sections, syntax, tables, rows, parameters, examples, related
+  links, and OS lists grow to fit their content instead of overflowing arrays
+  or silently dropping entries.
+- Stdin request frames have a 1 MiB limit. Oversized frames receive one error
+  and are discarded through the next newline without disrupting later requests.
+- Packaging tests force old-bundle move, publication, and restoration failures.
+  Windows packaging reports the backup location if restoration fails.
 - Each compiler/program run owns its descendants for its complete lifetime.
   Windows launch workers join a kill-on-close job before starting user code;
   Linux workers use a separate process group and parent-death notification.

@@ -344,6 +344,10 @@ for (const name of expected) {
 if (missing > 20) console.log(`  ... and ${missing - 20} more`);
 for (const c of cmds) if (!seen.has(asciiLower(c.name))) extra++;
 console.log(`  expected ${expected.length}, indexed ${cmds.length}, missing ${missing}, extra ${extra}`);
+if (expected.length === 0 || cmds.length === 0) {
+  console.error('No commands found in the coverage index or scanned pages; refusing to replace the documentation index.');
+  process.exit(1);
+}
 if (missing > 0) process.exit(1);
 
 // --- emit (RunIndexMode emit order, byte for byte) ---------------------------

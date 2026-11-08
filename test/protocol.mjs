@@ -83,4 +83,27 @@ for (const fileMode of [false, true]) {
 }
 assert.equal(session([request(1, 'tools/call', { name: 'pb_version' })])[0].result.isError, false);
 assert.equal(session([request(1, 'tools/call', { name: 'missing' })])[0].error.code, -32602);
+
+const frameLimit = 1024 * 1024;
+const ping = JSON.stringify(request('boundary'));
+const padded = bytes => ping + ' '.repeat(bytes - Buffer.byteLength(ping));
+for (const bytes of [frameLimit, frameLimit + 1, frameLimit * 3]) {
+  const input = padded(bytes) + '\n' + JSON.stringify(request('after-large-frame')) + '\n';
+  const result = spawnSync(exe, [], { input, cwd: root, env, encoding: 'utf8', timeout: 5000, windowsHide: true });
+  assert.equal(result.status, 0, result.stderr || String(result.error));
+  const [first, next, extra] = result.stdout.trim().split('\n').map(JSON.parse);
+  if (bytes === frameLimit) assert.deepEqual(first, { jsonrpc: '2.0', id: 'boundary', result: {} });
+  else {
+    assert.equal(first.id, null);
+    assert.equal(first.error.code, -32600);
+    assert.match(first.error.message, /exceeds 1048576 bytes/);
+  }
+  assert.deepEqual(next, { jsonrpc: '2.0', id: 'after-large-frame', result: {} });
+  assert.equal(extra, undefined, 'one oversized frame produced multiple errors');
+}
+const unfinished = spawnSync(exe, [], { input: padded(frameLimit * 3), cwd: root, env,
+  encoding: 'utf8', timeout: 5000, windowsHide: true });
+assert.equal(unfinished.status, 0, unfinished.stderr || String(unfinished.error));
+assert.equal(unfinished.stdout.trim().split('\n').length, 1);
+assert.equal(JSON.parse(unfinished.stdout).error.code, -32600);
 console.log('protocol tests passed (invalid envelopes/calls, batch framing, notifications, execution hints, unknown tools)');

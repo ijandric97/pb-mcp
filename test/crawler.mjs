@@ -21,7 +21,7 @@ const server = createServer((req, res) => {
     const ref = mode === 'server' ? 'broken' : mode === 'transient' ? 'transient' : mode === 'reset' ? 'reset' : 'gone';
     res.end(`<a href="reference/${ref}.html">ref</a><a href="reference/ok.html">ok</a>`);
   } else if (path === '/reference/commandindex.html') {
-    res.end('<a href="../lib/cmd.html">command</a>');
+    res.end(mode === 'empty-index' ? '<html>Maintenance</html>' : '<a href="../lib/cmd.html">command</a>');
   } else if (path === '/reference/gone.html') {
     res.writeHead(mode === 'missing410' ? 410 : 404).end('missing');
   } else if (path === '/reference/broken.html') {
@@ -107,6 +107,14 @@ try {
   assert.equal(JSON.parse(readFileSync(join(tolerated, 'manifest.json'), 'utf8')).kind, 'online');
   assert.equal(existsSync(join(tolerated, 'reference', 'gone.html')), false, 'stale copy of a 404 page remains');
   assert.equal(existsSync(join(tolerated, 'oldlib', 'removed.html')), false, 'obsolete command page remains after refresh');
+
+  mode = 'empty-index';
+  const beforeEmptyRefresh = readFileSync(join(tolerated, 'manifest.json'));
+  const emptyRefresh = await crawl(tolerated);
+  assert.equal(emptyRefresh.code, 1, emptyRefresh.stdout + emptyRefresh.stderr);
+  assert.match(emptyRefresh.stderr, /No command pages found/);
+  assert.deepEqual(readFileSync(join(tolerated, 'manifest.json')), beforeEmptyRefresh);
+  assert.equal(readFileSync(join(tolerated, 'lib', 'cmd.html'), 'utf8'), '<html>command</html>');
 
   mode = 'missing410';
   const gone410 = join(scratch, 'gone-410');

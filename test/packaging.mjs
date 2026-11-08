@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -112,6 +112,50 @@ try {
   assert.equal(readFileSync(join(dist, 'skills', 'purebasic', 'references', 'guide.md'), 'utf8'), 'guide');
   assertNoStaging();
 
+  // Replace only the copied script's move commands, leaving its recovery logic intact.
+  const moveProbe = join(scratch, win ? 'move-probe.cmd' : 'move-probe.sh');
+  writeFileSync(moveProbe, win ? [
+    '@echo off',
+    'set /p moveCount=<"%~dp0move-count"',
+    'set /a moveCount+=1',
+    '>"%~dp0move-count" echo %moveCount%',
+    'if "%FAIL_MOVE%"=="%moveCount%" exit /b 1',
+    'if "%FAIL_RESTORE%"=="1" if %moveCount% GTR 1 exit /b 1',
+    'move %*',
+    'exit /b %errorlevel%',
+    '',
+  ].join('\r\n') : [
+    '#!/bin/bash',
+    'read -r count < "$PWD/move-count"',
+    'count=$((count + 1))',
+    'echo "$count" > "$PWD/move-count"',
+    'if [ "${FAIL_MOVE:-0}" = "$count" ]; then exit 1; fi',
+    'if [ "${FAIL_RESTORE:-0}" = 1 ] && [ "$count" -gt 1 ]; then exit 1; fi',
+    'exec mv -- "$@"',
+    '',
+  ].join('\n'));
+  const originalScript = readFileSync(script, 'utf8');
+  writeFileSync(script, win
+    ? originalScript.replace(/\bmove (?=")/g, 'call "%~dp0move-probe.cmd" ')
+    : originalScript.replace(/\bmv -- /g, 'bash "$PWD/move-probe.sh" '));
+  for (const [failMove, failRestore] of [[1, false], [2, false], [2, true]]) {
+    previous = setPreviousDist();
+    writeFileSync(join(scratch, 'move-count'), '0\n');
+    result = run({ FAIL_MOVE: String(failMove), FAIL_RESTORE: failRestore ? '1' : '0' });
+    assert.notEqual(result.status, 0, 'move failure unexpectedly succeeded');
+    if (failRestore) {
+      assert.equal(existsSync(dist), false);
+      const backups = readdirSync(scratch).filter(name => name.startsWith('.dist-stage') && name.endsWith('.old'));
+      assert.equal(backups.length, 1, 'failed restoration lost the previous bundle');
+      const backup = join(scratch, backups[0]);
+      assert.deepEqual(snapshot(backup), previous);
+      assert.ok((result.stdout + result.stderr).includes(backup), 'backup location was not reported');
+      renameSync(backup, dist);
+    } else assert.deepEqual(snapshot(dist), previous, 'move failure damaged the previous bundle');
+    assertNoStaging();
+  }
+  writeFileSync(script, originalScript);
+
   if (win) {
     // A running executable can prevent Windows from renaming the old dist directory.
     setPreviousDist();
@@ -131,7 +175,7 @@ try {
     }
   }
 
-  console.log(`packaging tests passed (${win ? 'make-dist.cmd' : 'make-dist.sh'}: build/copy/smoke/test failures, successful replacement${win ? ', locked executable' : ''})`);
+  console.log(`packaging tests passed (${win ? 'make-dist.cmd' : 'make-dist.sh'}: build/copy/smoke/test/move/publish/restore failures, successful replacement${win ? ', locked executable' : ''})`);
 } finally {
   const resolved = join(tempRoot, scratch.slice(tempRoot.length + 1));
   if (dirname(resolved) !== tempRoot) throw new Error(`unsafe cleanup target: ${resolved}`);

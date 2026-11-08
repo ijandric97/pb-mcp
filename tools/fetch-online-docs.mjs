@@ -96,6 +96,10 @@ const rootHtml = (await fetchPage(base)).toString('latin1');
 // the native builder's coverage check walks):
 const cmdHtml = (await fetchPage(base + 'reference/commandindex.html')).toString('latin1');
 const cmdPages = [...new Set(extractHrefs(cmdHtml, RE_CMD_HREF))];
+if (cmdPages.length === 0) {
+  console.error('No command pages found in commandindex.html; refusing to replace the documentation mirror.');
+  process.exit(1);
+}
 // reference pages start from the root index links; many more (user guide,
 // migration pages) are only linked from OTHER reference pages, so the crawl
 // runs to a fixpoint: scan every fetched reference page for further

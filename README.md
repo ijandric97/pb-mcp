@@ -254,6 +254,9 @@ shape under `"mcpServers"`. On Linux the command is e.g.
 Protocol: MCP over stdio — JSON-RPC 2.0, newline-framed UTF-8,
 `2025-03-26`; the optional HTTP mode speaks stateless Streamable HTTP with
 `2025-11-25`.
+Each stdin request line is limited to 1 MiB (1,048,576 bytes before the LF).
+An oversized line receives error `-32600` with a null ID and is discarded
+through its next LF; subsequent requests are processed normally.
 Requests may be sent individually or in a batch array. A batch produces one
 response array; notifications receive no response. Invalid request envelopes
 and unknown tools return JSON-RPC errors. Tool execution failures use
@@ -319,6 +322,8 @@ reference. It is not used by the automatic source build:
   The installed help is indexed directly without downloading pages.
   Index output is replaced only after a complete
   file has been written.
+  Empty command discovery or coverage fails the refresh and preserves the
+  previous mirror or index, including HTTP 200 error pages with no command links.
 - An optional `referenceText` map stores cleaned reference bodies once per file;
   keyword and constant aliases share those bodies. HTML decoration is removed,
   code examples retain line breaks/indentation, and `pb_command` caps the answer

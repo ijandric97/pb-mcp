@@ -163,8 +163,34 @@ assert.match(text(nonzeroResult), /^exit 7 /);
 assert.equal(JSON.parse(readFileSync(nonzeroMetrics, 'utf8').trim()).ok, true, 'runtime exit code changed compile-scoped metrics');
 const stderrSource = join(scratch, 'oversized-stderr.pb');
 const stderrExe = join(scratch, 'oversized-stderr' + suffix);
-writeFileSync(stderrSource, '\uFEFFEnableExplicit\nIf OpenConsole()\n  ConsoleError(LSet("x", 5 * 1024 * 1024, "x"))\n  CloseConsole()\nEndIf\n');
+writeFileSync(stderrSource, '\uFEFF' + `EnableExplicit
+If OpenConsole()
+  Select ProgramParameter(0)
+    Case "long"
+      ConsoleError(LSet("x", 10 * 1024 * 1024, "x"))
+      Delay(3000)
+    Case "flood"
+      Repeat
+        ConsoleError(LSet("x", 65536, "x"))
+      ForEver
+    Case "unicode"
+      ConsoleError(LSet("x", 65535, "x") + "é🚀" + Chr(10) + Chr(10) + "after")
+      PrintN("stdout-only")
+    Default
+      ConsoleError(LSet("x", 5 * 1024 * 1024, "x"))
+  EndSelect
+  CloseConsole()
+EndIf
+`);
 compile(stderrSource, stderrExe);
+for (const mode of ['long', 'flood']) {
+  const timed = rpc([['pb_run', { file: stderrSource, args: [mode], timeoutMs: 1000 }]]);
+  const response = timed.responses[0];
+  assert.equal(response.result.isError, true);
+  const elapsed = Number(/^TIMEOUT after (\d+) ms/.exec(text(response))?.[1]);
+  assert.ok(elapsed >= 900 && elapsed < 2000, `${mode}: deadline delayed: ${text(response).slice(0, 100)}`);
+  assert.ok(timed.ms < 3000, `${mode}: timeout response took ${timed.ms}ms`);
+}
 const captureSource = join(scratch, 'capture-probe.pb');
 const captureExe = join(scratch, 'capture-probe' + suffix);
 const includes = ['console', 'jsonrpc', 'config', 'metrics', 'docs_index', 'tool_check', 'tool_run', 'tools'];
@@ -179,12 +205,10 @@ If captured\\spawnFailed Or captured\\timedOut Or captured\\exitCode <> 0 : End 
 If Len(captured\\stderr) <> #MAX_CAPTURE_CHARS + Len(marker$) : End 3 : EndIf
 If Right(captured\\stderr, Len(marker$)) <> marker$ : End 4 : EndIf
 If Left(captured\\stderr, 16) <> LSet("x", 16, "x") : End 5 : EndIf
-NewList lines$()
-Define count.i = #MAX_CAPTURE_CHARS - 1, truncated.i
-CaptureErrorLine("last", lines$(), @count, @truncated)
-If count <> #MAX_CAPTURE_CHARS Or truncated = 0 : End 6 : EndIf
-CaptureErrorLine("discarded", lines$(), @count, @truncated)
-If count <> #MAX_CAPTURE_CHARS Or ListSize(lines$()) <> 1 : End 7 : EndIf
+RunProcessCapture("${stderrExe}", "unicode", "${scratch}", 5000, @captured)
+If captured\\spawnFailed Or captured\\timedOut Or captured\\exitCode <> 0 : End 6 : EndIf
+If Right(captured\\stderr, Len("é🚀" + Chr(10) + Chr(10) + "after" + Chr(10))) <> "é🚀" + Chr(10) + Chr(10) + "after" + Chr(10) : End 7 : EndIf
+If TrimAll(captured\\stdout) <> "stdout-only" : End 11 : EndIf
 Define failed.RunResultT
 failed\\compileRes\\spawnFailed = #True
 If FindString(FormatRunResult(@failed, "fixture.pb"), "Compiler failed to start.") = 0 : End 8 : EndIf
@@ -201,4 +225,4 @@ compile(captureSource, captureExe);
 const captured = spawnSync(captureExe, [], { env, encoding: 'utf8', timeout: 15000, windowsHide: true });
 assert.equal(captured.status, 0, `capture probe exit ${captured.status}: ${captured.stdout}${captured.stderr}`);
 assert.match(captured.stdout, /stderr capture bounded/);
-console.log(`compiler tests passed (includes/resources/diagnostics, compiler failures, metrics paths, args, lint); 50,000 lines: ${Math.round(measured.ms)}ms wall, ${reported}ms reported`);
+console.log(`compiler tests passed (includes/resources/diagnostics, compiler failures, metrics paths, args, lint, stderr caps/UTF-8/deadlines); 50,000 lines: ${Math.round(measured.ms)}ms wall, ${reported}ms reported`);
