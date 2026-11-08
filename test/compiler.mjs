@@ -62,6 +62,18 @@ for (const tool of ['pb_check', 'pb_run']) {
   assert.equal(failed.result.isError, true, text(failed));
   assert.ok(text(failed).includes('absent.pbi'), 'missing include diagnostic was lost: ' + text(failed));
 }
+const brokenMain = join(project, 'broken-main.pb');
+const brokenInclude = join(project, 'nested', 'broken.pbi');
+writeFileSync(brokenMain, 'EnableExplicit\nXIncludeFile "nested/broken.pbi" ; Dim wrong As Integer\n');
+writeFileSync(brokenInclude, 'EnableExplicit\nunknownVariable = 1\n');
+for (const tool of ['pb_check', 'pb_run']) {
+  const failed = invoke(tool, { file: brokenMain });
+  assert.equal(failed.result.isError, true, text(failed));
+  assert.match(text(failed), /Line 2: .*variables have to be declared: unknownVariable/);
+  assert.ok(text(failed).includes(brokenInclude), 'included source path was lost: ' + text(failed));
+  assert.ok(!text(failed).includes('Line 0:'), text(failed));
+  assert.ok(!text(failed).includes('PureBasic has no `Dim'), 'hint used the main file instead of the included file');
+}
 
 const hello = join(root, 'test', 'fixtures', 'hello.pb');
 const args = ['alpha', 'beta gamma', '', 'tail\\', 'tab\tvalue', String.raw`\u0000`, String.raw`\\u0000`];
@@ -121,6 +133,34 @@ function compile(file, output) {
   const result = spawnSync(compiler, args, { env, encoding: 'utf8', timeout: 30000, windowsHide: true });
   assert.equal(result.status, 0, result.stdout + result.stderr);
 }
+const fakeHome = join(scratch, 'fake-home');
+mkdirSync(join(fakeHome, win ? 'Compilers' : 'compilers'), { recursive: true });
+const fakeCompilerSource = join(scratch, 'fake-compiler.pb');
+writeFileSync(fakeCompilerSource, '\uFEFFEnableExplicit\nIf OpenConsole()\n' +
+  `  If ProgramParameter(0) = "${win ? '/VERSION' : '--version'}"\n` +
+  '    PrintN("PureBasic 6.41")\n    End 1\n  EndIf\n' +
+  '  ConsoleError("fatal: controlled linker failure")\n  CloseConsole()\nEndIf\nEnd 2\n');
+compile(fakeCompilerSource, join(fakeHome, win ? 'Compilers' : 'compilers', 'pbcompiler' + suffix));
+const failureMetrics = join(scratch, 'new-metrics-parent', 'nested', 'metrics.jsonl');
+const failure = invoke('pb_run', { file: hello }, { PUREBASIC_HOME: fakeHome,
+  PUREBASIC_MCP_NO_METRICS: '0', PUREBASIC_MCP_METRICS: failureMetrics });
+assert.equal(failure.result.isError, true, text(failure));
+assert.match(text(failure), /controlled linker failure/);
+assert.match(text(failure), /Compiler exited with code 2/);
+assert.equal(JSON.parse(readFileSync(failureMetrics, 'utf8').trim()).ok, false,
+  'stderr-only compiler failure was recorded as success');
+for (const tool of ['pb_check', 'pb_run']) {
+  const nestedMetrics = join(scratch, 'metrics-' + tool, 'nested', 'metrics.jsonl');
+  ok(invoke(tool, { file: hello }, { PUREBASIC_MCP_NO_METRICS: '0', PUREBASIC_MCP_METRICS: nestedMetrics }));
+  assert.equal(JSON.parse(readFileSync(nestedMetrics, 'utf8').trim()).ok, true);
+}
+const nonzero = join(scratch, 'nonzero.pb');
+writeFileSync(nonzero, '\uFEFFEnableExplicit\nEnd 7\n');
+const nonzeroMetrics = join(scratch, 'nonzero-metrics.jsonl');
+const nonzeroResult = invoke('pb_run', { file: nonzero }, { PUREBASIC_MCP_NO_METRICS: '0', PUREBASIC_MCP_METRICS: nonzeroMetrics });
+assert.equal(nonzeroResult.result.isError, true);
+assert.match(text(nonzeroResult), /^exit 7 /);
+assert.equal(JSON.parse(readFileSync(nonzeroMetrics, 'utf8').trim()).ok, true, 'runtime exit code changed compile-scoped metrics');
 const stderrSource = join(scratch, 'oversized-stderr.pb');
 const stderrExe = join(scratch, 'oversized-stderr' + suffix);
 writeFileSync(stderrSource, '\uFEFFEnableExplicit\nIf OpenConsole()\n  ConsoleError(LSet("x", 5 * 1024 * 1024, "x"))\n  CloseConsole()\nEndIf\n');
@@ -144,6 +184,15 @@ CaptureErrorLine("last", lines$(), @count, @truncated)
 If count <> #MAX_CAPTURE_CHARS Or truncated = 0 : End 6 : EndIf
 CaptureErrorLine("discarded", lines$(), @count, @truncated)
 If count <> #MAX_CAPTURE_CHARS Or ListSize(lines$()) <> 1 : End 7 : EndIf
+Define failed.RunResultT
+failed\\compileRes\\spawnFailed = #True
+If FindString(FormatRunResult(@failed, "fixture.pb"), "Compiler failed to start.") = 0 : End 8 : EndIf
+failed\\compileRes\\spawnFailed = #False
+failed\\compileRes\\timedOut = #True
+If FindString(FormatRunResult(@failed, "fixture.pb"), "Compiler timeout after 30000 ms") = 0 : End 9 : EndIf
+failed\\hasRun = #True
+failed\\runRes\\spawnFailed = #True
+If FindString(FormatRunResult(@failed, "fixture.pb"), "PROGRAM FAILED TO START") <> 1 : End 10 : EndIf
 PrintN("stderr capture bounded")
 CloseConsole()
 `);
@@ -151,4 +200,4 @@ compile(captureSource, captureExe);
 const captured = spawnSync(captureExe, [], { env, encoding: 'utf8', timeout: 15000, windowsHide: true });
 assert.equal(captured.status, 0, `capture probe exit ${captured.status}: ${captured.stdout}${captured.stderr}`);
 assert.match(captured.stdout, /stderr capture bounded/);
-console.log(`compiler tests passed (includes/resources, original paths, args, lint); 50,000 lines: ${Math.round(measured.ms)}ms wall, ${reported}ms reported`);
+console.log(`compiler tests passed (includes/resources/diagnostics, compiler failures, metrics paths, args, lint); 50,000 lines: ${Math.round(measured.ms)}ms wall, ${reported}ms reported`);

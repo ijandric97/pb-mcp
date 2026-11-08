@@ -31,7 +31,7 @@ Structure RunResultT
   timedOut.i            ; program timeout
   durationMs.i          ; TOTAL wall time (compile + run) - this is what
                         ; the metrics record logs
-  hasRun.i
+  hasRun.i              ; compilation succeeded and execution was attempted
   compileRes.RunResT    ; compiler spawn result (stdout holds diagnostics)
   runRes.RunResT        ; program spawn result (valid when hasRun)
   List compileErrors.DiagT()
@@ -47,15 +47,31 @@ Procedure.s FormatRunResult(*res.RunResultT, File$)
     ForEach *res\compileErrors()
       If shown >= 40 : Break : EndIf
       out$ + Chr(10) + "Line " + Str(*res\compileErrors()\line) + ": " + *res\compileErrors()\message
+      If *res\compileErrors()\file <> "" : out$ + " (in " + *res\compileErrors()\file + ")" : EndIf
       shown + 1
     Next
     If *res\noExecutable
       out$ + Chr(10) + "(compiler reported success but produced no executable)"
+    ElseIf *res\compileRes\spawnFailed
+      out$ + Chr(10) + "Compiler failed to start."
+    ElseIf *res\compileRes\timedOut
+      out$ + Chr(10) + "Compiler timeout after " + Str(#COMPILE_TIMEOUT_MS) + " ms — process killed."
+    ElseIf ListSize(*res\compileErrors()) = 0 And *res\compileRes\exitCode <> 0
+      out$ + Chr(10) + "Compiler exited with code " + Str(*res\compileRes\exitCode) + "."
+    EndIf
+    If ListSize(*res\compileErrors()) = 0
+      Protected raw$ = StripCompilerNoise(*res\compileRes\stdout)
+      If raw$ <> "" : out$ + Chr(10) + "--- compiler stdout ---" + Chr(10) + CapText(raw$, 4000) : EndIf
+    EndIf
+    If TrimAll(*res\compileRes\stderr) <> ""
+      out$ + Chr(10) + "--- compiler stderr ---" + Chr(10) + CapText(TrimAll(*res\compileRes\stderr), 4000)
     EndIf
     ProcedureReturn CapText(out$, #RUN_SECTION_CAP)
   EndIf
 
-  If *res\timedOut
+  If *res\runRes\spawnFailed
+    out$ = "PROGRAM FAILED TO START (" + File$ + ")"
+  ElseIf *res\timedOut
     out$ = "TIMEOUT after " + Str(*res\runRes\durationMs) + " ms — process killed (" + File$ + ")"
   Else
     Protected code$ = Str(*res\runRes\exitCode)
@@ -134,7 +150,7 @@ Procedure RunConsoleProgram(CompilerExe$, AbsFile$, ProjectRoot$, List ProgArgs$
   NewList ignoredWarnings.DiagT()
   ParseDiagnostics(*res\compileRes\stdout, *res\compileErrors(), ignoredWarnings())
 
-  Protected compileFailed.i = Bool(*res\compileRes\spawnFailed Or *res\compileRes\exitCode <> 0 Or ListSize(*res\compileErrors()) > 0)
+  Protected compileFailed.i = Bool(*res\compileRes\spawnFailed Or *res\compileRes\timedOut Or *res\compileRes\exitCode <> 0 Or ListSize(*res\compileErrors()) > 0)
 
   If compileFailed = #False
     ; defense in depth: if the output switch was ignored but the compiler
@@ -243,12 +259,11 @@ Procedure ToolRun(IdValue.i, Args.i)
 
   ; metrics: compile-scoped - runtime exit codes are
   ; behavior, not compile fixes; duration is the TOTAL wall time
-  Protected compiled.i = Bool(ListSize(res\compileErrors()) = 0 And res\noExecutable = #False)
   NewList msgs$()
   NewList buckets$()
   ForEach res\compileErrors() : AddElement(msgs$()) : msgs$() = res\compileErrors()\message : Next
   MetricsClassifyBuckets(msgs$(), buckets$())
-  MetricsAppend("pb_run", abs$, compiled, ListSize(msgs$()), buckets$(), res\durationMs)
+  MetricsAppend("pb_run", abs$, res\hasRun, ListSize(msgs$()), buckets$(), res\durationMs)
 
   SendTextResult(IdValue, FormatRunResult(@res, fileArg$), Bool(Not res\ok))
 EndProcedure

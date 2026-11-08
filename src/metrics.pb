@@ -179,7 +179,7 @@ Procedure MetricsAppend(Tool$, File$, Ok.i, ErrorCount.i, List Buckets$(), Durat
   ; append fire-and-forget: create parent dirs, create-or-append, UTF-8
   Protected f.i = OpenFile(#PB_Any, path$, #PB_File_Append)
   If f = 0
-    ConfigEnsureCacheDir()
+    ConfigEnsureDirectory(GetPathPart(path$))
     f = OpenFile(#PB_Any, path$, #PB_File_Append)
   EndIf
   If f = 0 : ProcedureReturn : EndIf   ; metrics failure stays invisible

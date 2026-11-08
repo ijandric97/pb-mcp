@@ -48,6 +48,16 @@
 
 ### Fixed
 
+- The online crawler refuses to replace nonempty directories without its own
+  manifest, and rechecks the destination before publishing a completed mirror.
+- Compiler diagnostics retain the actual error, line number, and source path
+  for failures inside included files. Source-based hints do not use unrelated
+  lines from the main file for those errors.
+- `pb_run` reports compiler stderr, unparsed stdout, launch failures, and compile
+  timeouts. Failed compilation is recorded as failed in metrics, while runtime
+  exit codes retain the existing compile-scoped metric meaning.
+- Metrics overrides create their selected parent directories when needed.
+- Removed unused schema/scanner helpers and the unused version-exit capability.
 - `tools/call` validates its params, tool name, and optional argument object
   before reading members, preventing the missing-params crash. Request validation
   rejects incorrect JSON-RPC versions, invalid request IDs, and invalid parameter

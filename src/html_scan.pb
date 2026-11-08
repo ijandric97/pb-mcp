@@ -58,10 +58,6 @@ Declare.s HtmlNodeRich(Node.i)
 Declare HtmlCollect(Node.i, Tag$)
 Declare HtmlParseCommand()
 
-Procedure.s HtmlLower(S$)
-  ProcedureReturn LCase(S$)
-EndProcedure
-
 ; Span append. Plain text between entities is copied with one
 ; Mid() per run (FindString locates the next "&") instead of one char per
 ; append - "a$ + b$" copies both operands, so the per-char loop was O(n^2).

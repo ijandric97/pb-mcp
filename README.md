@@ -283,7 +283,7 @@ compile-checked tool-compatible but not part of the test matrix.
 
 - **Compiler tools**: version detection parses the compiler's version output
   (`/VERSION` on Windows, `--version` on Linux) with a regex and never trusts
-  the exit code; capability flags (`bannerFilter`, `versionExitCode`) are
+  the exit code; the banner-filter capability is
   keyed on major version with conservative defaults for unknown versions.
   `pb_version` (tool) and `pbmcp[.exe] version` (CLI) surface the detected
   version.
@@ -310,8 +310,10 @@ reference. It is not used by the automatic source build:
   single-page scanning.
 - The optional online mirror finds reference pages by a fixpoint crawl and
   replaces the previous mirror only after a successful refresh. Removed pages
-  disappear from the refreshed mirror. The installed help is indexed directly
-  without downloading pages. Index output is replaced only after a complete
+  disappear from the refreshed mirror. An existing nonempty destination must
+  have a crawler `manifest.json`; other directories are preserved and rejected.
+  The installed help is indexed directly without downloading pages.
+  Index output is replaced only after a complete
   file has been written.
 - An optional `referenceText` map stores cleaned reference bodies once per file;
   keyword and constant aliases share those bodies. HTML decoration is removed,

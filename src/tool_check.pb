@@ -196,9 +196,10 @@ EndProcedure
 Structure DiagT
   line.i      ; 1-based source line, 0 when the compiler reported none
   message.s
+  file.s      ; included source, empty for the main source
 EndStructure
 
-Global Dim gDiagRe.i(3)
+Global Dim gDiagRe.i(4)
 Global gDiagReady.i = #False
 
 ; Group captures of the last ReMatch() call. GOTCHA FOUND LIVE ON 6.40:
@@ -231,10 +232,11 @@ EndProcedure
 
 Procedure DiagRulesInit()
   ; "Error: Line 2 - msg." / "Error: msg." / warning variants - PCRE verbatim
-  gDiagRe(0) = CreateRegularExpression(#PB_Any, "^Error: Line (\d+) - (.+?)\.?$")
+  gDiagRe(0) = CreateRegularExpression(#PB_Any, "^(?:Error: )?Line (\d+) - (.+?)\.?$")
   gDiagRe(1) = CreateRegularExpression(#PB_Any, "^Error: (.+?)\.?$")
   gDiagRe(2) = CreateRegularExpression(#PB_Any, "^Warning: Line (\d+) - (.+?)\.?$")
   gDiagRe(3) = CreateRegularExpression(#PB_Any, "^Warning: (.+)$")
+  gDiagRe(4) = CreateRegularExpression(#PB_Any, "^Error: in included file '(.+)'$")
   gDiagReady = #True
 EndProcedure
 
@@ -243,14 +245,20 @@ Procedure ParseDiagnostics(Output$, List Errors.DiagT(), List Warnings.DiagT())
   ClearList(Errors())
   ClearList(Warnings())
   Protected n.i = CountString(Output$, Chr(10)) + 1
-  Protected i.i, raw$, m.i
+  Protected i.i, raw$, includedFile$
   For i = 1 To n
     raw$ = Trim(RTrim(Trim(StringField(Output$, i, Chr(10))), Chr(13)))
     If raw$ = "" : Continue : EndIf
+    If ReMatch(gDiagRe(4), raw$)
+      includedFile$ = gReG1
+      Continue
+    EndIf
     If ReMatch(gDiagRe(0), raw$)
       AddElement(Errors())
       Errors()\line = Val(gReG1)
       Errors()\message = gReG2
+      Errors()\file = includedFile$
+      includedFile$ = ""
     ElseIf ReMatch(gDiagRe(1), raw$)
       AddElement(Errors())
       Errors()\line = 0
@@ -1140,6 +1148,7 @@ Procedure BuildHints(List Errors.DiagT(), List Buckets$(), SourceText$, List Hin
     Protected normText$ = ReplaceString(SourceText$, Chr(13) + Chr(10), Chr(10))
     Protected dimAs.i = #False, badComment.i = #False, vbSub.i = #False, procDollar.i = #False
     ForEach Errors()
+      If Errors()\file <> "" : Continue : EndIf
       Protected src$ = SourceLineAtNorm(normText$, Errors()\line)
       If src$ = "" : Continue : EndIf
       If Not dimAs And MatchRegularExpression(gHintDimAs, src$) : dimAs = #True : EndIf
@@ -1315,6 +1324,7 @@ Procedure.s FormatCheckResult(StartMs.i, LineCount.i, Ok.i, TimedOut.i, List Err
       ForEach Errors()
         If shown >= 40 : Break : EndIf
         out$ + Chr(10) + "Line " + Str(Errors()\line) + ": " + Errors()\message
+        If Errors()\file <> "" : out$ + " (in " + Errors()\file + ")" : EndIf
         shown + 1
       Next
       If ListSize(Errors()) > shown

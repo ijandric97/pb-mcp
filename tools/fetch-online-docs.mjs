@@ -15,7 +15,7 @@
 // Writes <mirrorDir>/manifest.json on success. Reference HTTP 404/410 links
 // are tolerated; all other fetch failures exit 1 after retries.
 // ---------------------------------------------------------------------------
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,6 +35,21 @@ for (const protectedPath of [process.cwd(), fileURLToPath(import.meta.url)]) {
     console.error(`Refusing to replace a working or source directory: ${target}`);
     process.exit(2);
   }
+}
+function mirrorTargetSafe() {
+  if (!existsSync(target)) return true;
+  try {
+    if (!lstatSync(target).isDirectory()) return false;
+    if (readdirSync(target).length === 0) return true;
+    const manifest = JSON.parse(readFileSync(join(target, 'manifest.json'), 'utf8'));
+    return manifest?.kind === 'online' && typeof manifest.url === 'string' && typeof manifest.crawledAt === 'string';
+  } catch {
+    return false;
+  }
+}
+if (!mirrorTargetSafe()) {
+  console.error(`Refusing to replace a directory without a crawler manifest: ${target}`);
+  process.exit(2);
 }
 
 const CONCURRENCY = 6;
@@ -162,6 +177,7 @@ try {
       referencePages: [...refCache.values()].filter(Boolean).length,
     };
     writeFileSync(join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    if (!mirrorTargetSafe()) throw new Error(`Refusing to replace a directory without a crawler manifest: ${target}`);
     if (existsSync(target)) renameSync(target, backup);
     renameSync(stage, target);
     published = true;

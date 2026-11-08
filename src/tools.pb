@@ -23,15 +23,6 @@ EnableExplicit
 ; ---------------------------------------------------------------------------
 ; schema builders
 ; ---------------------------------------------------------------------------
-Procedure AddProp(Props.i, Name$, JsonType$, Desc$)
-  Protected p.i = AddJSONMember(Props, Name$)
-  SetJSONObject(p)
-  SetJSONString(AddJSONMember(p, "type"), JsonType$)
-  If Desc$ <> ""
-    SetJSONString(AddJSONMember(p, "description"), Desc$)
-  EndIf
-EndProcedure
-
 ; string prop constraints - minLength always present, maxLength only when
 ; constrained (0 = none).
 Procedure AddStrProp(Props.i, Name$, Desc$, MinLen.i, MaxLen.i)

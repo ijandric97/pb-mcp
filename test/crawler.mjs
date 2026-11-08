@@ -14,6 +14,7 @@ const scratchRelative = relative(tempRoot, scratch);
 const scratchInsideTemp = scratchRelative !== '' && !scratchRelative.startsWith('..') && !isAbsolute(scratchRelative);
 let mode = 'missing';
 let transientAttempts = 0;
+let raceTarget;
 const server = createServer((req, res) => {
   const path = new URL(req.url, 'http://localhost').pathname;
   if (path === '/') {
@@ -35,6 +36,11 @@ const server = createServer((req, res) => {
   } else if (path === '/lib/cmd.html' && mode === 'command-failure') {
     res.writeHead(500).end('broken');
   } else if (path === '/lib/cmd.html') {
+    if (raceTarget) {
+      mkdirSync(raceTarget);
+      writeFileSync(join(raceTarget, 'main.pb'), 'created during crawl');
+      raceTarget = undefined;
+    }
     res.end('<html>command</html>');
   } else {
     res.writeHead(404).end('not found');
@@ -43,6 +49,7 @@ const server = createServer((req, res) => {
 
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}/`;
+const previousManifest = JSON.stringify({ kind: 'online', url: base, crawledAt: '2026-11-08T00:00:00Z' });
 
 function crawl(dir, nodeArgs = []) {
   return new Promise((resolve, reject) => {
@@ -73,12 +80,28 @@ try {
     assert.equal(result.code, 2, result.stderr);
     assert.match(result.stderr, /Refusing to replace/);
   }
+  for (const [i, manifest] of [null, '{broken', '{"kind":"another-tool"}'].entries()) {
+    const sourceDir = join(scratch, 'source-' + i);
+    mkdirSync(sourceDir);
+    const source = join(sourceDir, 'main.pb');
+    writeFileSync(source, 'original source');
+    if (manifest !== null) writeFileSync(join(sourceDir, 'manifest.json'), manifest);
+    const refused = await crawl(sourceDir);
+    assert.equal(refused.code, 2, refused.stdout + refused.stderr);
+    assert.match(refused.stderr, /Refusing to replace/);
+    assert.equal(readFileSync(source, 'utf8'), 'original source', 'crawler replaced a source directory');
+  }
+  const racedTarget = raceTarget = join(scratch, 'created-during-crawl');
+  const raced = await crawl(racedTarget);
+  assert.equal(raced.code, 1, raced.stdout + raced.stderr);
+  assert.match(raced.stderr, /Refusing to replace/);
+  assert.equal(readFileSync(join(racedTarget, 'main.pb'), 'utf8'), 'created during crawl');
   const tolerated = join(scratch, 'tolerated');
   mkdirSync(join(tolerated, 'reference'), { recursive: true });
   mkdirSync(join(tolerated, 'oldlib'), { recursive: true });
   writeFileSync(join(tolerated, 'reference', 'gone.html'), 'stale page');
   writeFileSync(join(tolerated, 'oldlib', 'removed.html'), 'obsolete command');
-  writeFileSync(join(tolerated, 'manifest.json'), '{"stale":true}');
+  writeFileSync(join(tolerated, 'manifest.json'), previousManifest);
   const ok = await crawl(tolerated);
   assert.equal(ok.code, 0, ok.stderr);
   assert.equal(JSON.parse(readFileSync(join(tolerated, 'manifest.json'), 'utf8')).kind, 'online');
@@ -89,52 +112,56 @@ try {
   const gone410 = join(scratch, 'gone-410');
   mkdirSync(join(gone410, 'reference'), { recursive: true });
   writeFileSync(join(gone410, 'reference', 'gone.html'), 'stale page');
+  writeFileSync(join(gone410, 'manifest.json'), previousManifest);
   const tolerated410 = await crawl(gone410);
   assert.equal(tolerated410.code, 0, tolerated410.stderr);
   assert.equal(existsSync(join(gone410, 'reference', 'gone.html')), false, 'stale copy of a 410 page remains');
 
   mode = 'transient';
-  const recovered = await crawl(join(scratch, 'transient-retry'));
+  const emptyTarget = join(scratch, 'transient-retry');
+  mkdirSync(emptyTarget);
+  const recovered = await crawl(emptyTarget);
   assert.equal(recovered.code, 0, recovered.stderr);
   assert.equal(transientAttempts, 2, 'transient HTTP 503 was not retried exactly once');
 
   mode = 'server';
   const failed = join(scratch, 'server-failure');
   mkdirSync(failed, { recursive: true });
-  writeFileSync(join(failed, 'manifest.json'), '{"stale":true}');
+  writeFileSync(join(failed, 'manifest.json'), previousManifest);
   writeFileSync(join(failed, 'previous.html'), 'previous mirror');
   const serverError = await crawl(failed);
   assert.equal(serverError.code, 1, serverError.stderr);
   assert.match(serverError.stderr, /FAILED 1 reference page\(s\)/);
   assert.match(serverError.stderr, /reference\/broken\.html: HTTP 503/);
-  assert.equal(readFileSync(join(failed, 'manifest.json'), 'utf8'), '{"stale":true}', 'failed refresh changed the old manifest');
+  assert.equal(readFileSync(join(failed, 'manifest.json'), 'utf8'), previousManifest, 'failed refresh changed the old manifest');
   assert.equal(readFileSync(join(failed, 'previous.html'), 'utf8'), 'previous mirror', 'failed refresh changed the old mirror');
 
   mode = 'reset';
   const resetDir = join(scratch, 'connection-reset');
   mkdirSync(resetDir, { recursive: true });
-  writeFileSync(join(resetDir, 'manifest.json'), '{"stale":true}');
+  writeFileSync(join(resetDir, 'manifest.json'), previousManifest);
   const resetError = await crawl(resetDir);
   assert.equal(resetError.code, 1, resetError.stderr);
   assert.match(resetError.stderr, /FAILED 1 reference page\(s\)/);
   assert.match(resetError.stderr, /reference\/reset\.html: fetch failed/);
-  assert.equal(readFileSync(join(resetDir, 'manifest.json'), 'utf8'), '{"stale":true}', 'network failure changed the old manifest');
+  assert.equal(readFileSync(join(resetDir, 'manifest.json'), 'utf8'), previousManifest, 'network failure changed the old manifest');
 
   mode = 'command-failure';
   const commandFailure = join(scratch, 'command-failure');
   mkdirSync(commandFailure, { recursive: true });
-  writeFileSync(join(commandFailure, 'manifest.json'), '{"kind":"previous"}');
+  writeFileSync(join(commandFailure, 'manifest.json'), previousManifest);
   writeFileSync(join(commandFailure, 'previous.html'), 'previous mirror');
   const commandError = await crawl(commandFailure);
   assert.equal(commandError.code, 1, commandError.stderr);
   assert.match(commandError.stderr, /FAILED 1 page\(s\):/);
   assert.match(commandError.stderr, /lib\/cmd\.html: HTTP 500/);
-  assert.equal(readFileSync(join(commandFailure, 'manifest.json'), 'utf8'), '{"kind":"previous"}', 'failed command refresh changed the old manifest');
+  assert.equal(readFileSync(join(commandFailure, 'manifest.json'), 'utf8'), previousManifest, 'failed command refresh changed the old manifest');
   assert.equal(readFileSync(join(commandFailure, 'previous.html'), 'utf8'), 'previous mirror', 'failed command refresh changed the old mirror');
   mode = 'missing';
   for (const failRestore of [false, true]) {
     const target = join(scratch, failRestore ? 'rollback-failure' : 'publish-failure');
     mkdirSync(target);
+    writeFileSync(join(target, 'manifest.json'), previousManifest);
     writeFileSync(join(target, 'previous.html'), 'previous mirror');
     const fault = join(scratch, 'rename-failure.cjs');
     writeFileSync(fault, `const fs = require('node:fs');
@@ -161,7 +188,7 @@ require('node:module').syncBuiltinESMExports();
       assert.equal(readFileSync(join(target, 'previous.html'), 'utf8'), 'previous mirror', 'failed publication did not restore the old mirror');
     }
   }
-  console.log('crawler tests passed (404/410, retries, failed-refresh preservation, stale-page cleanup)');
+  console.log('crawler tests passed (destination protection, 404/410, retries, failed-refresh preservation, stale-page cleanup)');
 } finally {
   await new Promise(resolve => server.close(resolve));
   assert.ok(scratchInsideTemp, `refusing recursive cleanup outside tmpdir: ${scratch}`);

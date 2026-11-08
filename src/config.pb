@@ -6,14 +6,11 @@
 ; never the globals, so first use costs one ~60 ms /VERSION spawn and later
 ; uses are free (process-lifetime cache, same pattern as the docs index).
 ;
-; Capability flags (evidence: mcp-pb-spike-640 probe + RESULTS-6.40.md):
+; Banner filtering (evidence: mcp-pb-spike-640 probe + RESULTS-6.40.md):
 ;   capBannerFilter      5.73 prints a "PureBasic x.y ..." banner line on
 ;                        every compiler run and must filter it; 6.40 success
 ;                        output is totally silent, so the filter is a no-op.
 ;                        Kept as a no-op shim so 5.73 fallback still works.
-;   capVersionExitCode   6.40 `/VERSION` prints the banner but EXITS 1. The
-;                        exit code of /VERSION must therefore never be
-;                        interpreted - we parse stdout only.
 ;
 ; Source-encoding rule: UTF-8 WITH BOM (see console.pb header).
 ; ---------------------------------------------------------------------------
@@ -58,8 +55,7 @@ Global gConfigReady.i = #False
 Global gPbHome$       = ""
 Global gCompilerPath$ = ""
 Global gPbVersion$    = ""
-Global gCapBannerFilter.i    = #True   ; conservative defaults until init:
-Global gCapVersionExitCode.i = #True   ; filter on, never trust exit codes
+Global gCapBannerFilter.i = #True   ; conservative default until init
 
 ; --- version detect (shared: config discovery + index builder) -------------
 ; Spawns <compilerPath> with the version switch, drains stdout with a timeout
@@ -167,16 +163,9 @@ Procedure ConfigInit()
 
   gPbVersion$ = ConfigDetectVersion(gCompilerPath$)
 
-  ; capability flags from the detected major version (conservative defaults
-  ; when the version string is missing: filter on, exit codes never trusted)
+  ; Older and unknown compilers keep the banner filter; 6.x success is silent.
   Protected major.i = Val(StringField(gPbVersion$, 1, "."))
-  If major >= 6
-    gCapBannerFilter    = #False  ; 6.x success output is silent
-    gCapVersionExitCode = #True   ; 6.40 /VERSION exits 1
-  Else
-    gCapBannerFilter    = #True   ; 5.x prints the banner, exits 0
-    gCapVersionExitCode = #False
-  EndIf
+  gCapBannerFilter = Bool(major < 6)
 EndProcedure
 
 Procedure.s ConfigPbHome()
@@ -197,11 +186,6 @@ EndProcedure
 Procedure ConfigCapBannerFilter()
   ConfigInit()
   ProcedureReturn gCapBannerFilter
-EndProcedure
-
-Procedure ConfigCapVersionExitCode()
-  ConfigInit()
-  ProcedureReturn gCapVersionExitCode
 EndProcedure
 
 ; --- path resolution -------------------------------------------------------
@@ -314,11 +298,11 @@ Procedure.s ConfigCacheDir()
   CompilerEndIf
 EndProcedure
 
-; mkdir -p equivalent for the cache dir (CreateDirectory is single-level;
+; mkdir -p equivalent (CreateDirectory is single-level;
 ; create each missing level, skip existing). Separator-aware: on Windows the
 ; root prefix "X:\" (3 chars) is skipped, on Linux the leading "/" (1 char).
-Procedure ConfigEnsureCacheDir()
-  Protected path$ = ConfigCacheDir()
+Procedure ConfigEnsureDirectory(Dir$)
+  Protected path$ = ResolvePath(Dir$)
   Protected skip.i = 1
   CompilerIf #PB_Compiler_OS = #PB_OS_Windows
     skip = 3   ; skip "X:\"
