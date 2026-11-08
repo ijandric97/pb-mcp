@@ -4,6 +4,10 @@
 
 ### Added
 
+- Windows build regressions exercise the real `build.cmd` with a controlled
+  compiler, including output paths, test targeting, and failed build stages.
+- Multiprocess metrics regressions check complete records, bounded lock waits,
+  and recovery after a writer holding the file exits.
 - Local `build.cmd test` / `bash build.sh test` commands that build and run the
   full acceptance suite against the resulting binary, including output overrides.
 - Live/replay protocol regressions for exact decimal/exponent IDs, nesting
@@ -62,6 +66,12 @@
 
 ### Fixed
 
+- Metrics appends serialize across clients and retry brief contention without
+  changing the record format or making logging failures fatal.
+- Single-page scans infer library and relative-file metadata when optional CLI
+  arguments are omitted, including relative and forward-slash paths.
+- Missing-index messages explain the platform's installed-help build command,
+  packaged index replacement, and explicit index overrides.
 - Requests deeper than 128 object/array levels are rejected before the native
   JSON parser can overflow its stack.
 - Numeric request IDs are normalized with exact decimal arithmetic, preserving

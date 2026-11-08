@@ -93,7 +93,7 @@ EndProcedure
 ; index-missing error - docs tools only
 ; ---------------------------------------------------------------------------
 Procedure SendIndexMissing(IdValue.i)
-  SendTextResult(IdValue, DocsIndexDetail() + Chr(10) + "Build the index (node tools/build-online-index.mjs) or drop index-*.json next to the executable, then restart the server.", #True)
+  SendTextResult(IdValue, DocsIndexDetail() + Chr(10) + DocsIndexRecoveryHint(), #True)
 EndProcedure
 
 ; ---------------------------------------------------------------------------
@@ -356,7 +356,7 @@ Procedure ToolVersion(IdValue.i, Args.i)
       Str(DocsCommandCount()) + " commands, " + Str(DocsReferenceCount()) + " reference pages" + Chr(10) +
       "  " + DocsIndexPath()
   Else
-    out$ + Chr(10) + "Docs index: none — " + DocsIndexDetail()
+    out$ + Chr(10) + "Docs index: none — " + DocsIndexDetail() + Chr(10) + DocsIndexRecoveryHint()
   EndIf
   SendTextResult(IdValue, out$, #False)
 EndProcedure

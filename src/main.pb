@@ -147,6 +147,7 @@ Procedure RunVersionMode()
     PrintN("  " + DocsIndexPath())
   Else
     PrintN("Docs index: none - " + DocsIndexDetail())
+    PrintN(DocsIndexRecoveryHint())
   EndIf
 EndProcedure
 

@@ -306,6 +306,8 @@ The metrics file defaults to `<cache>/purebasic-mcp/metrics.jsonl`, where
 `<cache>` is `%LOCALAPPDATA%` on Windows and `${XDG_CACHE_HOME:-~/.cache}`
 on Linux.
 New records use UTC timestamps with a `Z` suffix; existing records are preserved.
+Concurrent clients serialize appends. A busy metrics file is retried for up to
+500 ms; logging failures remain nonfatal and do not change tool results.
 
 ## PureBasic version support
 

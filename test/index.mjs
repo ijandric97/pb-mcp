@@ -32,6 +32,16 @@ for (const [i, request] of requests.entries()) {
   const expected = JSON.parse(readFileSync(join(root, 'test', 'fixtures_html_scan', 'goldens', request.file + '.json'), 'utf8'));
   assert.deepEqual(JSON.parse(records[i]), expected, 'batch parser state leaked into ' + request.file);
 }
+const defaultPage = pages.find(page => page.file === 'Window/OpenWindow.html');
+const defaultExpected = JSON.parse(readFileSync(join(root, 'test', 'fixtures_html_scan', 'goldens', defaultPage.file + '.json'), 'utf8'));
+for (const path of [defaultPage.path, relative(root, defaultPage.path), defaultPage.path.replaceAll('\\', '/')]) {
+  for (const args of [[], ['Custom'], ['Custom', 'custom.html']]) {
+    const scanned = spawnSync(exe, ['scan', path, ...args], { cwd: root, env, encoding: 'utf8', timeout: 5000, windowsHide: true });
+    assert.equal(scanned.status, 0, scanned.stderr);
+    const library = args[0] || 'Window';
+    assert.deepEqual(JSON.parse(scanned.stdout), { ...defaultExpected, library, file: args[1] || library + '/OpenWindow.html' });
+  }
+}
 assert.equal(batch([]).stdout, '');
 for (const invalid of [{}, [null], [{ path: 42, library: 'Window', file: 'bad.html' }],
   [{ path: pages[0].path, library: '', file: 'bad.html' }], [{ ...pages[0], path: 'nul\0path' }]]) {
@@ -181,4 +191,4 @@ assert.notEqual(failedWrite.status, 0);
 assert.match(failedWrite.stderr, /simulated partial write failure/);
 assert.deepEqual(readFileSync(output), previous, 'partial output write damaged the working index');
 assert.ok(!readdirSync(scratch).some(name => name.startsWith('.pbdocs-')), 'failed write left a staged index');
-console.log('index tests passed (batch parity/errors, coverage, atomic output, offline text/aliases, legacy fallback, caps)');
+console.log('index tests passed (scan defaults/overrides, batch parity/errors, coverage, atomic output, offline text/aliases, legacy fallback, caps)');

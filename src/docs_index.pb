@@ -98,6 +98,14 @@ Procedure.s DocsIndexDetail()
   ProcedureReturn gIndexDetail$
 EndProcedure
 
+Procedure.s DocsIndexRecoveryHint()
+  Protected build$ = "bash build.sh"
+  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+    build$ = "build.cmd"
+  CompilerEndIf
+  ProcedureReturn "From a source checkout, run " + build$ + " to index the selected compiler's installed help and rebuild. For a packaged server, place a valid index.json next to the executable. If PUREBASIC_MCP_INDEX is set, fix or unset it, then restart the server."
+EndProcedure
+
 ; pb_version accessors (raw reads - callers run DocsIndexEnsure first).
 Procedure.s DocsIndexPath()
   ProcedureReturn gIndexPath$
@@ -342,7 +350,7 @@ Procedure DocsIndexInit()
       If cmds = 0 Or JSONType(cmds) <> #PB_JSON_Array Or refs = 0 Or JSONType(refs) <> #PB_JSON_Array
         gIndexDetail$ = "Index " + path$ + " failed schema validation: commands/reference arrays missing"
       ElseIf JSONArraySize(cmds) = 0
-        gIndexDetail$ = "Docs index has no commands - build one: node tools/build-online-index.mjs <docsRoot> --out pbdocs-index.json (drop index-*.json next to the executable to switch help versions)"
+        gIndexDetail$ = "Docs index has no commands."
       ElseIf Not DocsEntriesValid(cmds, #False) Or Not DocsEntriesValid(refs, #True)
         gIndexDetail$ = "Index " + path$ + " failed schema validation: invalid command or reference entry"
       Else

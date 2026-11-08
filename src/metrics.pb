@@ -25,6 +25,20 @@
 EnableExplicit
 
 #METRICS_SOURCE$ = "mcp"
+#METRICS_LOCK_TIMEOUT_MS = 500
+
+CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+  UseMD5Fingerprint()
+CompilerElse
+  ImportC ""
+    MetricsOpen.l(*path, flags.l, mode.l) As "open"
+    MetricsFlock.l(fd.l, operation.l) As "flock"
+    MetricsWrite.i(fd.l, *buffer, bytes.i) As "write"
+    MetricsClose.l(fd.l) As "close"
+  EndImport
+  #METRICS_OPEN_APPEND = $80000 | $400 | $40 | 1 ; O_CLOEXEC | O_APPEND | O_CREAT | O_WRONLY
+  #METRICS_LOCK_EX_NB = 2 | 4
+CompilerEndIf
 
 ; --- classifier: 21 frozen error-bucket rules ------------------------------
 ; Order is priority (first match wins per message). Patterns are PCRE and
@@ -174,13 +188,51 @@ Procedure MetricsAppend(Tool$, File$, Ok.i, ErrorCount.i, List Buckets$(), Durat
   line$ + "," + JsonQ("buckets") + ":" + buckets$
   line$ + "," + JsonQ("durationMs") + ":" + Str(DurationMs) + "}"
 
-  ; append fire-and-forget: create parent dirs, create-or-append, UTF-8
-  Protected f.i = OpenFile(#PB_Any, path$, #PB_File_Append)
-  If f = 0
-    ConfigEnsureDirectory(GetPathPart(path$))
-    f = OpenFile(#PB_Any, path$, #PB_File_Append)
-  EndIf
-  If f = 0 : ProcedureReturn : EndIf   ; metrics failure stays invisible
-  WriteString(f, line$ + Chr(10), #PB_UTF8)
-  CloseFile(f)
+  ConfigEnsureDirectory(GetPathPart(path$))
+  Protected started.i = ElapsedMilliseconds()
+  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+    ; Queue writers before the exclusive open so one busy client cannot starve others.
+    Protected name$ = "Local\pbmcp-metrics-" + StringFingerprint(LCase(ResolvePath(path$)), #PB_Cipher_MD5)
+    Protected mutex.i = CreateMutex_(0, #False, @name$), f.i, waited.i
+    If mutex = 0 : ProcedureReturn : EndIf
+    waited = WaitForSingleObject_(mutex, #METRICS_LOCK_TIMEOUT_MS)
+    If waited = #WAIT_OBJECT_0 Or waited = #WAIT_ABANDONED
+      Repeat
+        f = OpenFile(#PB_Any, path$, #PB_File_Append)
+        If f
+          WriteString(f, line$ + Chr(10), #PB_UTF8)
+          CloseFile(f)
+          Break
+        EndIf
+        If ElapsedMilliseconds() - started >= #METRICS_LOCK_TIMEOUT_MS : Break : EndIf
+        Delay(5)
+      ForEver
+      ReleaseMutex_(mutex)
+    EndIf
+    CloseHandle_(mutex)
+  CompilerElse
+    Protected *encoded = UTF8(path$)
+    If *encoded = 0 : ProcedureReturn : EndIf
+    Protected fd.l = MetricsOpen(*encoded, #METRICS_OPEN_APPEND, $1B6)
+    FreeMemory(*encoded)
+    If fd < 0 : ProcedureReturn : EndIf
+    Repeat
+      If MetricsFlock(fd, #METRICS_LOCK_EX_NB) = 0
+        *encoded = UTF8(line$ + Chr(10))
+        If *encoded
+          Protected length.i = StringByteLength(line$ + Chr(10), #PB_UTF8), written.i, bytes.i
+          While written < length
+            bytes = MetricsWrite(fd, *encoded + written, length - written)
+            If bytes <= 0 : Break : EndIf
+            written + bytes
+          Wend
+          FreeMemory(*encoded)
+        EndIf
+        Break
+      EndIf
+      If ElapsedMilliseconds() - started >= #METRICS_LOCK_TIMEOUT_MS : Break : EndIf
+      Delay(5)
+    ForEver
+    MetricsClose(fd)
+  CompilerEndIf
 EndProcedure

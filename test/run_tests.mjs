@@ -717,8 +717,8 @@ console.log("\n[7] file mode + live stdin wiring (all five tools)");
 console.log("\n[8] missing-index UX (live, scratch dirs only)");
 // ===========================================================================
 {
-  const HINT = "Build the index (node tools/build-online-index.mjs) or drop index-*.json next to the executable, then restart the server.";
-  const EMBEDDED_EMPTY = "Docs index has no commands - build one: node tools/build-online-index.mjs <docsRoot> --out pbdocs-index.json (drop index-*.json next to the executable to switch help versions)";
+  const HINT = `From a source checkout, run ${IS_WIN ? 'build.cmd' : 'bash build.sh'} to index the selected compiler's installed help and rebuild. For a packaged server, place a valid index.json next to the executable. If PUREBASIC_MCP_INDEX is set, fix or unset it, then restart the server.`;
+  const EMBEDDED_EMPTY = "Docs index has no commands.";
   const scratch = join(outDir, "ux_scratch");
   const emptyDir = join(scratch, "empty");
   const missingPath = join(scratch, "missing.json");
@@ -734,12 +734,16 @@ console.log("\n[8] missing-index UX (live, scratch dirs only)");
   // [A] explicit env -> missing file
   {
     const env = { PUREBASIC_MCP_INDEX: missingPath };
-    const pb = runPb(() => [initializeRequest(), call("pb_docs_search", { query: "window" }), call("pb_command", { name: "OpenWindow" })], env);
+    const pb = runPb(() => [initializeRequest(), call("pb_docs_search", { query: "window" }), call("pb_command", { name: "OpenWindow" }), call("pb_version", {})], env);
     const b1 = text(pb.byId.get(2)), b2 = text(pb.byId.get(3));
     check("[A] pb_docs_search is an error result", pb.byId.get(2)?.result?.isError === true, b1);
     check("[A] pb_command shares the missing-index path", pb.byId.get(3)?.result?.isError === true, b2);
     check("[A] message names the missing path + hint line",
       b1 === `PUREBASIC_MCP_INDEX points at a missing file: ${missingPath}\n${HINT}`, b1);
+    check("[A] pb_command returns the same recovery instructions", b2 === b1, b2);
+    check("[A] pb_version includes recovery instructions", text(pb.byId.get(4)).includes(HINT));
+    const cli = spawnSync(exe, ["version"], { env: pinEnv(env), cwd: root, encoding: "utf8", timeout: 30000, windowsHide: true });
+    check("[A] version CLI includes recovery instructions", cli.status === 0 && cli.stdout.includes(HINT), cli.stderr || String(cli.error || ''));
   }
 
   // [B] explicit env -> invalid JSON (engine suffix not gated)

@@ -768,7 +768,7 @@ Procedure RunScanMode()
     ConsoleError("Usage: " + #BinName$ + " scan <html> [<library> <relfile>]")
     End 1
   EndIf
-  If library$ = "" : library$ = GetFilePart(GetPathPart(path$)) : EndIf
+  If library$ = "" : library$ = GetFilePart(RTrim(RTrim(GetPathPart(ResolvePath(path$)), "/"), "\")) : EndIf
   If relfile$ = "" : relfile$ = library$ + "/" + GetFilePart(path$) : EndIf
   ScanCommandPage(path$, library$, relfile$)
 EndProcedure
