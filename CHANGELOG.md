@@ -4,6 +4,9 @@
 
 ### Added
 
+- Acceptance-suite startup reports the selected executable and its source revision.
+- Regressions for invalid docs arguments with unavailable indexes, relocated
+  parser-cache inputs, and detached Linux stdout/stderr writers after exit or timeout.
 - Local regressions for prompt batch pings, mixed batch ordering, cancellation
   with a full deferred queue, batch-size boundaries, and strict source encoding.
 - Packaged-documentation smoke checks on both platforms verify the staged
@@ -60,6 +63,11 @@
 
 ### Changed
 
+- Final process-output reads stop at the remaining capture capacity plus one
+  byte for truncation detection, even when detached descendants keep writing.
+- Documentation tools validate arguments before checking index availability.
+- Parser-cache fingerprints use relative filenames so relocating the checkout
+  preserves a warm cache. Older fingerprints trigger one rebuild.
 - Control-only batches respond during active tools. A full deferred queue rejects
   excess requests with a retryable `-32000` busy error while continuing to handle
   pings and cancellation. Accepted work keeps its arrival order.

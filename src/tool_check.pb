@@ -682,19 +682,26 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
     If Not killIssued : KillTree(ProgramID(p)) : EndIf
   CompilerEndIf
 
-  ; final drain (buffered output after exit / after kill)
-  While AvailableProgramOutput(p)
+  ; Bound final reads: detached descendants may keep writing after the worker exits.
+  Protected remaining.i = #MAX_CAPTURE_CHARS - output\length + 1
+  While remaining > 0
     available = AvailableProgramOutput(p)
     If available > 65536 : available = 65536 : EndIf
+    If available > remaining : available = remaining : EndIf
     If available <= 0 : Break : EndIf
     n = ReadProgramData(p, *scratch, available)
     If n <= 0 : Break : EndIf
     CaptureBytes(@output, *scratch, n)
+    remaining - n
   Wend
-  While #True
-    n = ReadErrorPipe(errorPipe\reader, *scratch, 65536)
+  remaining = #MAX_CAPTURE_CHARS - errors\length + 1
+  While remaining > 0
+    available = remaining
+    If available > 65536 : available = 65536 : EndIf
+    n = ReadErrorPipe(errorPipe\reader, *scratch, available)
     If n <= 0 : Break : EndIf
     CaptureBytes(@errors, *scratch, n)
+    remaining - n
   Wend
   CloseErrorPipe(errorPipe\reader)
 

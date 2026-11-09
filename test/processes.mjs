@@ -111,11 +111,11 @@ for (const mode of ['normal', 'timeout', 'server-exit']) {
 // Linux process-group cleanup cannot reach a descendant that starts a new session.
 if (process.platform === 'linux') {
   const detachedSource = join(scratch, 'detached-descendant.pb');
-  const detachedBase = join(scratch, 'detached');
   writeFileSync(detachedSource, '\uFEFF' + `EnableExplicit
 ImportC ""
   DetachSession.l() As "setsid"
   DetachedPid.l() As "getpid"
+  DetachedWrite.i(fd.l, *buffer, bytes.i) As "write"
 EndImport
 Define base.s = GetEnvironmentVariable("PBMCP_DETACHED_BASE"), f.i
 If ProgramParameter(0) = "detached-child"
@@ -125,47 +125,70 @@ If ProgramParameter(0) = "detached-child"
   WriteStringN(f, Str(DetachedPid()), #PB_UTF8)
   WriteStringN(f, ProgramFilename(), #PB_UTF8)
   CloseFile(f)
+  If ProgramParameter(1) <> "silent"
+    Define stream.i = 1, *buffer = AllocateMemory(65536)
+    If *buffer = 0 : End 35 : EndIf
+    If ProgramParameter(1) = "stderr" : stream = 2 : EndIf
+    FillMemory(*buffer, 65536, 120)
+    If DetachedWrite(stream, *buffer, 1) <> 1 : End 36 : EndIf
+  EndIf
   f = CreateFile(#PB_Any, base + "-started")
   If f = 0 : End 34 : EndIf
   CloseFile(f)
+  If ProgramParameter(1) <> "silent"
+    While DetachedWrite(stream, *buffer, 65536) > 0 : Wend
+    FreeMemory(*buffer)
+    End
+  EndIf
   Delay(12000)
   f = CreateFile(#PB_Any, base + "-late")
   If f : CloseFile(f) : EndIf
 Else
-  Define child.i = RunProgram(ProgramFilename(), "detached-child", "", #PB_Program_Open | #PB_Program_Hide)
+  Define child.i = RunProgram(ProgramFilename(), "detached-child " + ProgramParameter(0), "", #PB_Program_Open | #PB_Program_Hide)
   If child = 0 : End 32 : EndIf
   Define deadline.i = ElapsedMilliseconds() + 3000
   While FileSize(base + "-started") = -1 And ElapsedMilliseconds() < deadline : Delay(5) : Wend
   If FileSize(base + "-started") = -1 : End 33 : EndIf
   CloseProgram(child)
+  If ProgramParameter(1) = "timeout" : Delay(12000) : EndIf
 EndIf
 `);
-  let detachedPid, detachedProgram;
   function isDetachedTestChild(pid, program) {
     try {
       const argv = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0');
       return argv.includes(program) && argv.includes('detached-child');
     } catch { return false; }
   }
-  try {
-    const response = call(exe, 'pb_run', { file: detachedSource }, { PBMCP_DETACHED_BASE: detachedBase }, 10000);
-    assert.equal(response.result.isError, false, JSON.stringify(response));
-    [detachedPid, detachedProgram] = readFileSync(detachedBase + '-pid', 'utf8').trim().split(/\r?\n/);
-    detachedPid = Number(detachedPid);
-    assert.ok(Number.isInteger(detachedPid) && detachedPid > 0);
-    assert.ok(isDetachedTestChild(detachedPid, detachedProgram), 'detached child identity did not match its PID marker');
-    assert.ok(alive(detachedPid), 'Linux process-group cleanup unexpectedly reached the detached child');
-  } finally {
-    // Confirm identity before signaling so a recycled PID cannot target another process.
-    if (!detachedPid && existsSync(detachedBase + '-pid')) {
+  for (const [stream, mode] of [
+    ['silent', 'normal'], ['stdout', 'normal'], ['stdout', 'timeout'], ['stderr', 'normal'], ['stderr', 'timeout'],
+  ]) {
+    const detachedBase = join(scratch, `detached-${stream}-${mode}`);
+    let detachedPid, detachedProgram;
+    try {
+      const response = call(exe, 'pb_run', { file: detachedSource, args: [stream, mode], timeoutMs: 1000 },
+        { PBMCP_DETACHED_BASE: detachedBase }, 10000);
+      assert.equal(response.result.isError, mode === 'timeout', JSON.stringify(response));
+      assert.match(response.result.content[0].text, mode === 'timeout' ? /^TIMEOUT/ : /^exit 0/);
+      if (stream !== 'silent') assert.ok(response.result.content[0].text.includes(`--- ${stream} ---\nx`), 'detached output was not captured');
       [detachedPid, detachedProgram] = readFileSync(detachedBase + '-pid', 'utf8').trim().split(/\r?\n/);
       detachedPid = Number(detachedPid);
-    }
-    if (detachedPid && detachedProgram && alive(detachedPid) && isDetachedTestChild(detachedPid, detachedProgram)) {
-      try { process.kill(detachedPid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
-      const deadline = performance.now() + 3000;
-      while (alive(detachedPid) && isDetachedTestChild(detachedPid, detachedProgram) && performance.now() < deadline) await sleep(10);
-      assert.ok(!alive(detachedPid) || !isDetachedTestChild(detachedPid, detachedProgram), 'detached test child was not reaped');
+      assert.ok(Number.isInteger(detachedPid) && detachedPid > 0);
+      if (stream === 'silent') {
+        assert.ok(isDetachedTestChild(detachedPid, detachedProgram), 'detached child identity did not match its PID marker');
+        assert.ok(alive(detachedPid), 'Linux process-group cleanup unexpectedly reached the detached child');
+      }
+    } finally {
+      // Confirm identity before signaling so a recycled PID cannot target another process.
+      if (!detachedPid && existsSync(detachedBase + '-pid')) {
+        [detachedPid, detachedProgram] = readFileSync(detachedBase + '-pid', 'utf8').trim().split(/\r?\n/);
+        detachedPid = Number(detachedPid);
+      }
+      if (detachedPid && detachedProgram && alive(detachedPid) && isDetachedTestChild(detachedPid, detachedProgram)) {
+        try { process.kill(detachedPid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+        const deadline = performance.now() + 3000;
+        while (alive(detachedPid) && isDetachedTestChild(detachedPid, detachedProgram) && performance.now() < deadline) await sleep(10);
+        assert.ok(!alive(detachedPid) || !isDetachedTestChild(detachedPid, detachedProgram), 'detached test child was not reaped');
+      }
     }
   }
 } else if (win) {

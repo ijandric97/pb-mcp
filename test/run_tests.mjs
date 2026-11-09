@@ -137,8 +137,12 @@ const initializeRequest = () => req("initialize", { protocolVersion: "2025-03-26
 const text = (m) => m?.result?.content?.[0]?.text ?? "";
 
 // ===========================================================================
-console.log("[0] determinism pin");
+console.log("[0] test target and determinism pin");
 // ===========================================================================
+console.log(`     executable: ${exe}`);
+console.log("     " + execFileSync(exe, ["version"], {
+  cwd: root, env: pinEnv(), encoding: "utf8", timeout: 20000, windowsHide: true,
+}).split(/\r?\n/, 1)[0]);
 check("docs test index resolved (spawns pinned to it)", !!pinnedIndex, "build the docs index or set PUREBASIC_MCP_INDEX");
 if (pinnedIndex) console.log(`     pinned: ${pinnedIndex}`);
 

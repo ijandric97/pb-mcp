@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeScratch } from './scratch.mjs';
@@ -78,6 +78,9 @@ for (const file of ['tools/build-local-index.mjs', 'tools/build-online-index.mjs
   writeFileSync(join(parserInputs, file), readFileSync(join(root, file)));
 }
 const parserHash = parserFingerprint(parserInputs);
+const relocatedParserInputs = join(scratch, 'relocated-parser-inputs');
+cpSync(parserInputs, relocatedParserInputs, { recursive: true });
+assert.equal(parserFingerprint(relocatedParserInputs), parserHash, 'relocating parser files changed the parser cache');
 writeFileSync(join(parserInputs, 'src/metrics.pb'), 'unrelated runtime change');
 assert.equal(parserFingerprint(parserInputs), parserHash, 'unrelated runtime changes invalidated the parser cache');
 writeFileSync(join(parserInputs, 'src/scan_support.pb'), 'changed shared scanner helper');

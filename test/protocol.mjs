@@ -149,6 +149,41 @@ for (const fileMode of [false, true]) {
 assert.equal(session([request(1, 'tools/call', { name: 'pb_version' })])[0].result.isError, false);
 assert.equal(session([request(1, 'tools/call', { name: 'missing' })])[0].error.code, -32602);
 
+const invalidDocs = [
+  { name: 'pb_command', arguments: {} },
+  { name: 'pb_command', arguments: { name: 42 } },
+  { name: 'pb_docs_search', arguments: {} },
+  { name: 'pb_docs_search', arguments: { query: 42 } },
+  { name: 'pb_docs_search', arguments: { query: 'window', limit: 0 } },
+];
+const originalIndex = env.PUREBASIC_MCP_INDEX;
+const corruptIndex = join(scratch, 'corrupt-index.json');
+const emptyIndex = join(scratch, 'empty-index.json');
+writeFileSync(corruptIndex, '{');
+writeFileSync(emptyIndex, JSON.stringify({ schemaVersion: 1, commands: [], reference: [] }));
+try {
+  for (const index of [originalIndex, join(scratch, 'missing-index.json'), corruptIndex, emptyIndex]) {
+    env.PUREBASIC_MCP_INDEX = index;
+    const responses = session([
+      ...invalidDocs.map((params, id) => request(id, 'tools/call', params)),
+      request('valid-command', 'tools/call', { name: 'pb_command', arguments: { name: 'OpenWindow' } }),
+      request('valid-search', 'tools/call', { name: 'pb_docs_search', arguments: { query: 'window' } }),
+      request('after-docs-validation'),
+    ]);
+    assert.equal(responses.length, invalidDocs.length + 3);
+    for (let id = 0; id < invalidDocs.length; id++) {
+      assert.equal(responses[id].id, id);
+      assert.equal(responses[id].error?.code, -32602, `${index}: ${JSON.stringify(responses[id])}`);
+    }
+    for (const response of responses.slice(invalidDocs.length, -1)) {
+      assert.equal(response.result?.isError, index !== originalIndex, JSON.stringify(response));
+    }
+    assert.deepEqual(responses.at(-1), { jsonrpc: '2.0', id: 'after-docs-validation', result: {} });
+  }
+} finally {
+  env.PUREBASIC_MCP_INDEX = originalIndex;
+}
+
 const toolSchemas = session([request(1, 'tools/list')])[0].result.tools;
 const validArgs = {
   pb_docs_search: { query: 'window', library: 'Window', limit: 2 },

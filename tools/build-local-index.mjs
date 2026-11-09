@@ -2,7 +2,7 @@
 // Generate the embedded index from the same installation as the build compiler.
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -90,7 +90,7 @@ export function parserFingerprint(projectRoot = root) {
     join(projectRoot, 'src', 'scan_support.pb'),
     join(projectRoot, 'src', 'html_scan.pb'),
   ]) {
-    hash.update(file).update('\0').update(readFileSync(file)).update('\0');
+    hash.update(relative(projectRoot, file)).update('\0').update(readFileSync(file)).update('\0');
   }
   return hash.digest('hex');
 }

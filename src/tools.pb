@@ -247,12 +247,6 @@ EndProcedure
 ; pb_docs_search
 ; ---------------------------------------------------------------------------
 Procedure ToolDocsSearch(IdValue.i, Args.i)
-  DocsIndexEnsure()
-  If Not DocsIndexOk()
-    SendIndexMissing(IdValue)
-    ProcedureReturn
-  EndIf
-
   Protected sOut.String   ; an *out.String must
                           ; receive a .String STRUCTURE member address; @ of a
                           ; plain string$ is its CONTENT buffer (writes never
@@ -278,6 +272,12 @@ Procedure ToolDocsSearch(IdValue.i, Args.i)
     ProcedureReturn
   EndIf
 
+  DocsIndexEnsure()
+  If Not DocsIndexOk()
+    SendIndexMissing(IdValue)
+    ProcedureReturn
+  EndIf
+
   NewList hits.HitT()
   DocsSearch(query$, library$, limit, hits())
   SendTextResult(IdValue, FormatSearchResults(hits(), query$), #False)
@@ -287,18 +287,18 @@ EndProcedure
 ; pb_command
 ; ---------------------------------------------------------------------------
 Procedure ToolDocsCommand(IdValue.i, Args.i)
-  DocsIndexEnsure()
-  If Not DocsIndexOk()
-    SendIndexMissing(IdValue)
-    ProcedureReturn
-  EndIf
-
   Protected sOut.String
   Protected name$
   Protected issue$ = ValidateStrArg(Args, "name", 80, #True, @sOut)
   name$ = sOut\s
   If issue$ <> ""
     SendInvalidParams(IdValue, "pb_command", issue$)
+    ProcedureReturn
+  EndIf
+
+  DocsIndexEnsure()
+  If Not DocsIndexOk()
+    SendIndexMissing(IdValue)
     ProcedureReturn
   EndIf
 

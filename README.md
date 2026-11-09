@@ -69,6 +69,8 @@ The cache also verifies a SHA-256 digest of the generated index content, so
 valid-looking edits or missing entries trigger regeneration. Older caches
 without a digest rebuild once; existing runtime indexes remain readable.
 Edits to compiler execution, metrics, or MCP request handling keep the docs cache warm.
+Parser fingerprints use relative filenames, so moving the checkout alone does
+not invalidate the cache. Existing caches rebuild once for this change.
 The previous index remains intact if generation fails. Changing installations
 or updating the help automatically invalidates the cache.
 
@@ -194,6 +196,8 @@ run `./build.cmd` or `bash build.sh`, then run the relevant standalone tests:
 Crawler-only edits need no server rebuild; that test uses a local HTTP fixture.
 Standalone server tests use the root executable unless `PBMCP_EXE` selects
 another build. Check that override before testing so it points at the new binary.
+The full suite prints the selected executable and its version, including the
+source revision, before running checks.
 The full suite includes 1,200 startup/shutdown sessions and deliberate timeout
 tests; run it at the acceptance gate below rather than after every small edit.
 
@@ -254,8 +258,9 @@ storage, while relative includes and runtime data paths use the original source.
 Processes that remain in each run's Windows job or Linux process group are
 terminated after normal exit, timeout, cancellation, or server termination. On
 Linux, a descendant can escape this cleanup by creating a new session or
-process group (for example, with `setsid`) and may outlive the call. Compiler
-and program stdin is a separate closed pipe (EOF).
+process group (for example, with `setsid`) and may outlive the call. Final output
+reads are bounded so an escaped writer cannot keep draining indefinitely.
+Compiler and program stdin is a separate closed pipe (EOF).
 
 Compiler tools process one call at a time while continuing to receive control
 messages. Pings, including batches containing only pings and cancellation
