@@ -90,13 +90,15 @@ Global *gInputBuffer, gInputCapacity.i, gInputLength.i, gInputScan.i, gInputErro
 Global NewList gPendingInput.InputFrameT()
 Global gPendingInputChars.i
 
-Procedure QueueInput(Text$, Error$ = "")
-  If Text$ = "" And Error$ = "" : ProcedureReturn : EndIf
+Procedure.i QueueInput(Text$, Error$ = "")
+  If Text$ = "" And Error$ = "" : ProcedureReturn #True : EndIf
+  If gPendingInputChars + Len(Text$) + Len(Error$) > #MAX_FRAME_BYTES : ProcedureReturn #False : EndIf
   LastElement(gPendingInput())
   AddElement(gPendingInput())
   gPendingInput()\text = Text$
   gPendingInput()\error = Error$
   gPendingInputChars + Len(Text$) + Len(Error$)
+  ProcedureReturn #True
 EndProcedure
 
 Procedure DecodeInputFrame(*frame.InputFrameT, Bytes.i)

@@ -186,6 +186,7 @@ run `./build.cmd` or `bash build.sh`, then run the relevant standalone tests:
 | Metrics | `node test/metrics.mjs` |
 | Online crawler | `node test/crawler.mjs` |
 | Build or packaging scripts | `node test/build.mjs`, `node test/package_docs_test.mjs`, and `node test/packaging.mjs` |
+| Source encoding gate | `node test/encoding.mjs` |
 
 Crawler-only edits need no server rebuild; that test uses a local HTTP fixture.
 Standalone server tests use the root executable unless `PBMCP_EXE` selects
@@ -254,13 +255,19 @@ process group (for example, with `setsid`) and may outlive the call. Compiler
 and program stdin is a separate closed pipe (EOF).
 
 Compiler tools process one call at a time while continuing to receive control
-messages. Pings can be answered before an earlier tool call finishes. Send an
+messages. Pings, including batches containing only pings and cancellation
+notifications, can be answered before an earlier tool call finishes. Send an
 MCP `notifications/cancelled` notification with the active call's `requestId` to
 stop its compiler or program and contained descendants; the cancelled call
 sends no result. The Linux process-group limit above also applies to cancellation.
 Unknown, completed, or malformed cancellation notifications are ignored.
-Other tool calls remain queued in arrival order. Deferred input is bounded, so
-large pipelines apply backpressure to the input pipe.
+Other calls remain queued in arrival order, including mixed batches containing
+tool calls. Deferred input is limited to 1,048,576 UTF-16 code units. A request
+that would exceed this limit receives JSON-RPC error `-32000` ("Server busy:
+deferred input limit reached; retry later"); overflow notifications are discarded.
+Pings and cancellation remain responsive when the queue is full. An overflow
+batch retains its response array: ordinary requests receive the busy error,
+while its pings and cancellation notifications are handled immediately.
 
 Both compiler tools show warnings without treating them as errors. Warning
 sections are bounded to 40 entries and 4,000 characters. `pb_check` counts source
@@ -338,8 +345,10 @@ Malformed UTF-8 and unpaired Unicode surrogate escapes are rejected with
 `-32600` and a null ID before decoding or native JSON processing. Valid surrogate
 pairs and literal escaped backslashes remain supported; subsequent requests are
 processed normally.
-Requests may be sent individually or in a batch array. A batch produces one
-response array; notifications receive no response. Invalid request envelopes
+Requests may be sent individually or in a batch array of at most 64 items,
+including notifications. A larger batch receives one error `-32600` with a null
+ID before any item executes. A valid batch produces one response array;
+notifications receive no response. Invalid request envelopes
 and unknown tools return JSON-RPC errors. Tool execution failures use
 `result.isError`. Unknown tool argument names are rejected, matching the
 advertised input schemas.
@@ -494,8 +503,8 @@ Set `PUREBASIC_HOME` to the installation to test.
 
 All `src/*.pb` are **UTF-8 with BOM**. BOM-less UTF-8 is silently misread as
 CP-1252 by the PB compilers; the Node lint in both build scripts enforces the
-BOM, and tool descriptions carry a deliberate em-dash canary so an encoding
-regression is visible in tool output.
+BOM and rejects malformed UTF-8, and tool descriptions carry a deliberate em-dash
+canary so an encoding regression is visible in tool output.
 
 ## Status
 

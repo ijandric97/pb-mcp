@@ -134,6 +134,17 @@ for (const fileMode of [false, true]) {
   assert.deepEqual(next, { jsonrpc: '2.0', id: -1, result: {} });
   assert.deepEqual(session([[{ jsonrpc: '2.0', method: 'ping' }], request(2)], fileMode),
     [{ jsonrpc: '2.0', id: 2, result: {} }]);
+  const atLimit = Array.from({ length: 64 }, (_, i) => request(i));
+  assert.deepEqual(session([atLimit], fileMode)[0], atLimit.map(({ id }) => ({ jsonrpc: '2.0', id, result: {} })));
+  for (const oversized of [[...atLimit, request(64)],
+    Array.from({ length: 65 }, () => ({ jsonrpc: '2.0', method: 'ping' }))]) {
+    const [rejected, recovered, extra] = session([oversized, request('after-batch-limit')], fileMode);
+    assert.equal(rejected.id, null);
+    assert.equal(rejected.error.code, -32600);
+    assert.match(rejected.error.message, /Batch exceeds 64 items/);
+    assert.deepEqual(recovered, { jsonrpc: '2.0', id: 'after-batch-limit', result: {} });
+    assert.equal(extra, undefined, 'oversized batch partially executed');
+  }
 }
 assert.equal(session([request(1, 'tools/call', { name: 'pb_version' })])[0].result.isError, false);
 assert.equal(session([request(1, 'tools/call', { name: 'missing' })])[0].error.code, -32602);

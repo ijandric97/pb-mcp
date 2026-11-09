@@ -903,7 +903,7 @@ try {
 }
 
 console.log("\n[12] compiler workflow, stdio lifecycle, and crawler regressions");
-for (const test of ["protocol.mjs", "protocol_isolation.mjs", "compiler.mjs", "processes.mjs", "cancellation.mjs", "metrics.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs", "build.mjs", "package_docs_test.mjs", "packaging.mjs"]) {
+for (const test of ["protocol.mjs", "protocol_isolation.mjs", "compiler.mjs", "processes.mjs", "cancellation.mjs", "metrics.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs", "encoding.mjs", "build.mjs", "package_docs_test.mjs", "packaging.mjs"]) {
   try {
     console.log(execFileSync(process.execPath, [join(testDir, test)], {
       cwd: root, env: { ...pinEnv(), PBMCP_EXE: exe }, encoding: "utf8", timeout: 60000, windowsHide: true,

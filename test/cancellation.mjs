@@ -127,8 +127,10 @@ try {
   await waitFor(runtime, () => existsSync(runtimeBase + '-started') && existsSync(runtimeBase + '-pid'), 'runtime child start');
   [runtimePid, runtimeProgram] = readFileSync(runtimeBase + '-pid', 'utf8').trim().split(/\r?\n/);
   runtimePid = Number(runtimePid);
+  runtime.stdin.write(json([ping('mixed-ping'), call('mixed-version', 'pb_version', {})]));
   runtime.stdin.write(json(ping('live-ping')));
   await waitFor(runtime, () => runtime.responses.some(r => r.id === 'live-ping'), 'prompt ping', 1500);
+  assert.equal(runtime.responses.some(Array.isArray), false, 'mixed batch ran before the active tool finished');
   const exactId = '9223372036854775807';
   const cancelLine = `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":${exactId}}}\n`;
   await writeFragmented(runtime, cancelLine);
@@ -136,7 +138,8 @@ try {
   runtime.stdin.write(json(call('queued-version', 'pb_version', {})));
   await waitFor(runtime, () => runtime.responses.some(r => r.id === 'queued'), 'queued request completion', 10000);
   await waitFor(runtime, () => runtime.responses.some(r => r.id === 'queued-version'), 'second queued request completion', 5000);
-  assert.deepEqual(runtime.responses.map(r => r.id), ['live-ping', 'queued', 'queued-version'], JSON.stringify(runtime.responses));
+  assert.deepEqual(runtime.responses.map(r => Array.isArray(r) ? r.map(item => item.id) : r.id),
+    ['live-ping', ['mixed-ping', 'mixed-version'], 'queued', 'queued-version'], JSON.stringify(runtime.responses));
   assert.equal(runtime.responses.find(r => r.id === 'queued').result.isError, false);
   const deadline = performance.now() + 3000;
   while (alive(runtimePid) && performance.now() < deadline) await sleep(10);
@@ -259,14 +262,53 @@ writeFileSync(inputSource, '\uFEFFEnableExplicit\n');
 const compilerServer = startServer({ PUREBASIC_HOME: fakeHome, PBMCP_FAKE_COMPILER_BASE: fakeBase });
 let fakePid;
 try {
-  compilerServer.stdin.write(json(call('compile-cancel', 'pb_check', { file: inputSource })));
+  compilerServer.stdin.write(json([ping('outer-before'), call('compile-cancel', 'pb_check', { file: inputSource }), ping('outer-after')]));
   await waitFor(compilerServer, () => existsSync(fakeBase + '-pid'), 'fake compiler start');
   fakePid = Number(readFileSync(fakeBase + '-pid', 'utf8').trim());
+  compilerServer.stdin.write(json([ping('batch-live-ping'), { jsonrpc: '2.0', method: 'ping' }]));
+  await waitFor(compilerServer, () => compilerServer.responses.some(r => Array.isArray(r) && r[0]?.id === 'batch-live-ping'),
+    'prompt batch ping during active batch', 1500);
+  assert.ok(alive(fakePid), 'compiler finished before batch ping was answered');
+
+  // Fill the exact deferred-character budget with one legal ASCII frame.
+  const queued = { jsonrpc: '2.0', id: 'queued-full', method: 'unknown/queued', params: { padding: '' } };
+  queued.params.padding = 'x'.repeat(1048576 - JSON.stringify(queued).length);
+  assert.equal(JSON.stringify(queued).length, 1048576);
+  compilerServer.stdin.write(json(queued));
+  compilerServer.stdin.write(json(call('overflow', 'pb_version', {})));
+  compilerServer.stdin.write(json([call('batch-overflow', 'pb_version', {}),
+    { jsonrpc: '2.0', method: 'notifications/initialized' }, ping('full-queue-ping')]));
+  compilerServer.stdin.write('not-json\n');
+  compilerServer.stdin.write(Buffer.from([0xff, 0x0a]));
+  const oversized = [cancelled('compile-cancel'), ...Array.from({ length: 64 }, (_, i) => ping('oversized-' + i))];
+  compilerServer.stdin.write(json(oversized));
+  await waitFor(compilerServer, () => compilerServer.responses.some(r => r.id === 'overflow') &&
+    compilerServer.responses.some(r => Array.isArray(r) && r[0]?.id === 'batch-overflow') &&
+    compilerServer.responses.some(r => r.error?.code === -32700) &&
+    compilerServer.responses.some(r => /UTF-8/.test(r.error?.message || '')) &&
+    compilerServer.responses.some(r => /Batch exceeds 64/.test(r.error?.message || '')), 'full queue responses', 3000);
+  const overflow = compilerServer.responses.find(r => r.id === 'overflow');
+  assert.equal(overflow.error.code, -32000);
+  assert.match(overflow.error.message, /Server busy.*retry later/);
+  const busyBatch = compilerServer.responses.find(r => Array.isArray(r) && r[0]?.id === 'batch-overflow');
+  assert.equal(busyBatch.length, 2, 'overflow notification emitted a response');
+  assert.equal(busyBatch[0].error.code, -32000);
+  assert.deepEqual(busyBatch[1], { jsonrpc: '2.0', id: 'full-queue-ping', result: {} });
+  assert.ok(alive(fakePid), 'oversized batch executed its cancellation notification');
+  assert.equal(compilerServer.responses.some(r => r.id === 'queued-full'), false, 'queued request ran during compilation');
   await writeFragmented(compilerServer, json(cancelled('compile-cancel')));
   compilerServer.stdin.write(json(ping('compiler-ping')));
   await waitFor(compilerServer, () => compilerServer.responses.some(r => r.id === 'compiler-ping'), 'compiler cancellation ping', 2500);
   await sleep(150);
-  assert.equal(compilerServer.responses.some(r => r.id === 'compile-cancel'), false, 'canceled compiler call emitted a result');
+  await waitFor(compilerServer, () => compilerServer.responses.some(r => r.id === 'queued-full'), 'full queue drained after cancellation', 2500);
+  assert.equal(compilerServer.responses.flat().some(r => r.id === 'compile-cancel'), false, 'canceled compiler call emitted a result');
+  const outerBatch = compilerServer.responses.find(r => Array.isArray(r) && r[0]?.id === 'outer-before');
+  assert.deepEqual(outerBatch?.map(r => r.id), ['outer-before', 'outer-after'], 'control batch damaged the active batch response');
+  assert.equal(compilerServer.responses.find(r => r.id === 'queued-full').error.code, -32601);
+  assert.ok(compilerServer.responses.indexOf(outerBatch) < compilerServer.responses.findIndex(r => r.id === 'queued-full'));
+  compilerServer.stdin.write(json(call('after-full-queue', 'pb_version', {})));
+  await waitFor(compilerServer, () => compilerServer.responses.some(r => r.id === 'after-full-queue'), 'queue capacity restored', 2500);
+  assert.equal(compilerServer.responses.find(r => r.id === 'after-full-queue').result.isError, false);
   const deadline = performance.now() + 3000;
   while (alive(fakePid) && performance.now() < deadline) await sleep(10);
   assert.equal(alive(fakePid), false, `fake compiler ${fakePid} survived cancellation`);
@@ -304,4 +346,4 @@ try {
   if (versionPid && alive(versionPid)) process.kill(versionPid, 'SIGKILL');
 }
 
-console.log('cancellation tests passed (runtime/compiler trees, exact IDs and reuse, fragmented controls, ignored cancellations, queued calls and batch framing)');
+console.log('cancellation tests passed (runtime/compiler trees, exact IDs and reuse, fragmented controls, ignored cancellations, queued/mixed calls, prompt batch pings and full-queue recovery)');

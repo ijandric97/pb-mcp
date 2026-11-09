@@ -16,6 +16,7 @@ Global gHttpAllowCompilerTools.i = #False
 Global gHttpCapturedResponse.s = ""
 #SERVER_NAME$      = "purebasic-mcp-pb"
 #SERVER_VERSION$   = "0.4.0"   ; 0.4.0: Streamable HTTP transport (pbmcp http), project staging for pb_check/pb_run, preload default off on non-TS builds
+#MAX_BATCH_ITEMS = 64
 
 Global gBatchActive.i = #False
 Global gBatchResponses$ = ""
@@ -353,7 +354,7 @@ Procedure HandleCancellation(Root.i, NumericId$)
   If gActiveRequestId$ <> "" And key$ = gActiveRequestId$ : gRequestCancelled = #True : EndIf
 EndProcedure
 
-Procedure HandleRequest(Root.i, NumericId$, CancelId$ = "")
+Procedure HandleRequest(Root.i, NumericId$, CancelId$ = "", Busy.i = #False)
   If JSONType(Root) <> #PB_JSON_Object
     SendError(0, -32600, "Invalid Request")
     ProcedureReturn
@@ -384,6 +385,10 @@ Procedure HandleRequest(Root.i, NumericId$, CancelId$ = "")
   Protected params.i = GetJSONMember(Root, "params")
   If params And JSONType(params) <> #PB_JSON_Object
     If Not isNotify : SendError(idM, -32602, "params must be an object") : EndIf
+    ProcedureReturn
+  EndIf
+  If Busy And method$ <> "ping" And method$ <> "notifications/cancelled"
+    If Not isNotify : SendError(idM, -32000, "Server busy: deferred input limit reached; retry later") : EndIf
     ProcedureReturn
   EndIf
   Select method$
@@ -467,7 +472,9 @@ Procedure HandleLine(Raw$, ControlOnly.i = #False)
   Protected line$ = RTrim(Trim(Raw$), Chr(13))
   If line$ = "" : ProcedureReturn : EndIf
   If JsonHasNul(line$)
-    If ControlOnly : QueueInput(Raw$) : ProcedureReturn : EndIf
+    If ControlOnly
+      If QueueInput(Raw$) : ProcedureReturn : EndIf
+    EndIf
     SendError(0, -32600, "NUL characters are not supported in JSON strings")
     ProcedureReturn
   EndIf
@@ -475,56 +482,69 @@ Procedure HandleLine(Raw$, ControlOnly.i = #False)
   Protected integerOverflow.i
   Protected preflight$ = JsonPreflight(line$, numericIds(), @integerOverflow)
   If preflight$ <> ""
-    If ControlOnly : QueueInput(Raw$) : ProcedureReturn : EndIf
+    If ControlOnly
+      If QueueInput(Raw$) : ProcedureReturn : EndIf
+    EndIf
     SendError(0, -32600, preflight$)
     ProcedureReturn
   EndIf
   Protected json.i = ParseJSON(#PB_Any, line$)
   If json = 0
-    If ControlOnly : QueueInput(Raw$) : ProcedureReturn : EndIf
+    If ControlOnly
+      If QueueInput(Raw$) : ProcedureReturn : EndIf
+    EndIf
     SendError(0, -32700, "Parse error")
     ProcedureReturn
   EndIf
   If integerOverflow
     FreeJSON(json)
-    If ControlOnly : QueueInput(Raw$) : ProcedureReturn : EndIf
+    If ControlOnly
+      If QueueInput(Raw$) : ProcedureReturn : EndIf
+    EndIf
     SendError(0, -32600, "JSON integer is outside the signed 64-bit range")
     ProcedureReturn
   EndIf
-  Protected root.i = JSONValue(json), i.i
-  If ControlOnly
-    Protected controlMethod$
-    If JSONType(root) = #PB_JSON_Object : controlMethod$ = MemberStr(root, "method", "") : EndIf
-    If controlMethod$ = "ping" Or controlMethod$ = "notifications/cancelled"
-      HandleRequest(root, numericIds("0"), numericIds("cancel0"))
-    Else
-      ; A batch keeps its response envelope; its cancellation notifications can act now.
-      If JSONType(root) = #PB_JSON_Array
-        For i = 0 To JSONArraySize(root) - 1
-          Protected entry.i = GetJSONElement(root, i)
-          If JSONType(entry) = #PB_JSON_Object
-            If MemberStr(entry, "method", "") = "notifications/cancelled"
-              HandleCancellation(entry, numericIds("cancel" + Str(i)))
-            EndIf
-          EndIf
-        Next
-      EndIf
-      QueueInput(Raw$)
-    EndIf
+  Protected root.i = JSONValue(json), i.i, busy.i, immediate.i, controlMethod$
+  If JSONType(root) = #PB_JSON_Array And JSONArraySize(root) > #MAX_BATCH_ITEMS
     FreeJSON(json)
+    SendError(0, -32600, "Batch exceeds " + Str(#MAX_BATCH_ITEMS) + " items")
     ProcedureReturn
   EndIf
+  If ControlOnly
+    If JSONType(root) = #PB_JSON_Object
+      controlMethod$ = MemberStr(root, "method", "")
+      immediate = Bool(controlMethod$ = "ping" Or controlMethod$ = "notifications/cancelled")
+    ElseIf JSONType(root) = #PB_JSON_Array And JSONArraySize(root) > 0
+      immediate = #True
+      For i = 0 To JSONArraySize(root) - 1
+        Protected entry.i = GetJSONElement(root, i)
+        controlMethod$ = ""
+        If JSONType(entry) = #PB_JSON_Object : controlMethod$ = MemberStr(entry, "method", "") : EndIf
+        If controlMethod$ = "notifications/cancelled"
+          HandleCancellation(entry, numericIds("cancel" + Str(i)))
+        ElseIf controlMethod$ <> "ping"
+          immediate = #False
+        EndIf
+      Next
+    EndIf
+    If Not immediate
+      If QueueInput(Raw$) : FreeJSON(json) : ProcedureReturn : EndIf
+      busy = #True
+    EndIf
+  EndIf
   If JSONType(root) = #PB_JSON_Array And JSONArraySize(root) > 0
+    ; Control batches may arrive while an earlier batch is waiting on a tool.
+    Protected previousBatch.i = gBatchActive, previousResponses$ = gBatchResponses$
     gBatchActive = #True
     gBatchResponses$ = ""
     For i = 0 To JSONArraySize(root) - 1
-      HandleRequest(GetJSONElement(root, i), numericIds(Str(i)), numericIds("cancel" + Str(i)))
+      HandleRequest(GetJSONElement(root, i), numericIds(Str(i)), numericIds("cancel" + Str(i)), busy)
     Next
-    gBatchActive = #False
     If gBatchResponses$ <> "" : WriteLine("[" + gBatchResponses$ + "]") : EndIf
-    gBatchResponses$ = ""
+    gBatchResponses$ = previousResponses$
+    gBatchActive = previousBatch
   Else
-    HandleRequest(root, numericIds("0"), numericIds("cancel0"))
+    HandleRequest(root, numericIds("0"), numericIds("cancel0"), busy)
   EndIf
   FreeJSON(json)
 EndProcedure
@@ -535,11 +555,9 @@ Procedure PollControlMessages()
   ; Separate frames must never append their responses to an active batch.
   gBatchActive = #False
   For i = 1 To 4
-    ; Bound deferred input; the pipe supplies backpressure for larger pipelines.
-    If gPendingInputChars >= #MAX_FRAME_BYTES : Break : EndIf
     If ReadInputFrame(@frame, #False) <> 1 : Break : EndIf
     If frame\error <> ""
-      QueueInput("", frame\error)
+      If QueueInput("", frame\error) = #False : SendError(0, -32600, frame\error) : EndIf
     Else
       HandleLine(frame\text, #True)
     EndIf

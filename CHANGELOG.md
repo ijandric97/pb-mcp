@@ -4,6 +4,8 @@
 
 ### Added
 
+- Local regressions for prompt batch pings, mixed batch ordering, cancellation
+  with a full deferred queue, batch-size boundaries, and strict source encoding.
 - Packaged-documentation smoke checks on both platforms verify the staged
   `index.json`, compiler/help version agreement, and `OpenWindow` syntax without
   an environment index override. Failures preserve the previous distribution.
@@ -58,6 +60,12 @@
 
 ### Changed
 
+- Control-only batches respond during active tools. A full deferred queue rejects
+  excess requests with a retryable `-32000` busy error while continuing to handle
+  pings and cancellation. Accepted work keeps its arrival order.
+- JSON-RPC batches are limited to 64 items and rejected before execution when
+  oversized, bounding aggregate work and response growth.
+- The source encoding gate now validates UTF-8 bytes as well as requiring a BOM.
 - Local verification guidance maps changes to the existing standalone tests for
   faster feedback, while full acceptance checks remain the commit/package gate.
 - Repository layout and source comments point to current tests instead of
