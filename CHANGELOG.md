@@ -52,6 +52,10 @@
 
 ### Changed
 
+- Local verification guidance maps changes to the existing standalone tests for
+  faster feedback, while full acceptance checks remain the commit/package gate.
+- Repository layout and source comments point to current tests instead of
+  missing historical reports and session directories.
 - Index builds use a small scanner executable and shared helpers. Only scanner
   and index-builder changes invalidate the parser cache; unrelated server edits
   reuse it. Compiler/help fingerprints and scan output checks remain in place.
@@ -78,6 +82,12 @@
 
 ### Fixed
 
+- Compiler failures without source line numbers retain bounded raw diagnostics,
+  including the missing symbol behind a generic linker error.
+- Compiler retries are limited to the known assembler write failure; permanent
+  linker and assembler errors are returned after one attempt.
+- Online mirror page totals and completion messages exclude tolerated missing
+  reference pages. Local crawler tests check missing and recovered page counts.
 - Unpaired Unicode surrogate escapes are rejected before native JSON processing,
   preventing a Windows heap-corruption crash. Valid pairs and escaped backslashes
   retain their original values.

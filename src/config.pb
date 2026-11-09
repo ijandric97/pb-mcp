@@ -6,7 +6,7 @@
 ; never the globals, so first use costs one ~60 ms /VERSION spawn and later
 ; uses are free (process-lifetime cache, same pattern as the docs index).
 ;
-; Banner filtering (evidence: mcp-pb-spike-640 probe + RESULTS-6.40.md):
+; Banner filtering:
 ;   capBannerFilter      5.73 prints a "PureBasic x.y ..." banner line on
 ;                        every compiler run and must filter it; 6.40 success
 ;                        output is totally silent, so the filter is a no-op.
@@ -16,10 +16,7 @@
 ; ---------------------------------------------------------------------------
 EnableExplicit
 
-; --- OS layer (Linux port Phase 1) ------------------------------------------
-; One source tree, thin per-OS branches (CompilerIf / CompilerSelect). The
-; Windows values are the reference; every Linux value traces to the Phase 0
-; spike notes in PORTING-LINUX.md. Windows behavior is byte-identical.
+; --- OS-specific paths and compiler switches -------------------------------
 CompilerSelect #PB_Compiler_OS
   CompilerCase #PB_OS_Windows
     #PathSep$    = "\"
@@ -34,8 +31,8 @@ CompilerSelect #PB_Compiler_OS
     #PathSep$    = "/"
     #BinName$    = "pbmcp"
     #ExeSuffix$  = ""              ; executed output carries no extension
-    #ProgReadFmt = #PB_UTF8        ; Linux compiler output is UTF-8 (spike 0.8)
-    #SW_VERSION$ = "--version"     ; "/"-switches do not exist on Linux (spike 0.1)
+    #ProgReadFmt = #PB_UTF8        ; Linux compiler output is UTF-8
+    #SW_VERSION$ = "--version"     ; "/"-switches do not exist on Linux
     #SW_CHECK$   = "--check"
     #SW_CONSOLE$ = "--console"
     #SW_EXE$     = "--output"      ; /EXE has no Linux equivalent
@@ -110,7 +107,7 @@ Procedure ConfigInit()
 
   CompilerSelect #PB_Compiler_OS
     CompilerCase #PB_OS_Windows
-      ; candidate list, plan order: PUREBASIC_HOME > Program Files (x86) >
+      ; Discovery order: PUREBASIC_HOME > Program Files (x86) >
       ; Program Files > C:\PureBasic > per-user install. The last entry is
       ; PB 6.40's default per-user install location (and where build.cmd looks
       ; on this machine).
@@ -143,7 +140,7 @@ Procedure ConfigInit()
 
     CompilerCase #PB_OS_Linux
       ; Spike 0.4: no fixed install dir (users unpack anywhere, register.sh
-      ; uses cwd or PUREBASIC_HOME). Candidate list per the plan:
+      ; uses cwd or PUREBASIC_HOME). Discovery order:
       ; PUREBASIC_HOME > ~/purebasic > /opt/purebasic > /usr/local/purebasic,
       ; binary <home>/compilers/pbcompiler (LOWERCASE "compilers" - Linux is
       ; case-sensitive). gcc must be on PATH for linking (compiler's problem,
@@ -208,7 +205,7 @@ EndProcedure
 ; Windows: forward slashes become backslashes, '.' and '..' segments
 ; collapse, relative paths anchor at the current directory. UNC paths pass
 ; through untouched; drive-relative paths anchor at the specified drive root.
-; Linux (port Phase 1): leading "/" = absolute, "/" kept, '.'/'..' collapse,
+; Linux: leading "/" = absolute, "/" kept, '.'/'..' collapse,
 ; relative paths anchor at the cwd; no drive or UNC logic. Tool-facing
 ; semantics on both OSes: absolute paths in, absolute paths out.
 Procedure.s ResolvePath(P$)

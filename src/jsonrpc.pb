@@ -1,8 +1,7 @@
 ﻿; ---------------------------------------------------------------------------
 ; jsonrpc.pb - JSON-RPC 2.0 request parse + response/error builders.
 ;
-; Provenance: adapted from mcp-pb-spike-640/mcp_server.pb (protocol core
-; verified 8/8 on PB 6.40). The tool hooks (ToolList / ToolDispatch) are
+; Protocol regressions live in test/protocol.mjs. ToolList / ToolDispatch are
 ; declared here and implemented in tools.pb to break the include cycle.
 ; ---------------------------------------------------------------------------
 EnableExplicit

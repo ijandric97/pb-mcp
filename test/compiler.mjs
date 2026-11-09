@@ -196,6 +196,14 @@ function compile(file, output) {
   const result = spawnSync(compiler, args, { env, encoding: 'utf8', timeout: 30000, windowsHide: true });
   assert.equal(result.status, 0, result.stdout + result.stderr);
 }
+const linkerSource = join(scratch, 'missing-symbol.pb');
+writeFileSync(linkerSource, '\uFEFFEnableExplicit\n' + (win ? 'Import "kernel32.lib"' : 'ImportC ""') +
+  '\n  PbmcpMissingLinkSymbol()\nEndImport\nPbmcpMissingLinkSymbol()\n');
+ok(invoke('pb_check', { file: linkerSource }));
+const linkerFailure = invoke('pb_run', { file: linkerSource });
+assert.equal(linkerFailure.result.isError, true, text(linkerFailure));
+assert.match(text(linkerFailure), /PbmcpMissingLinkSymbol/, 'linker failure lost the missing symbol');
+
 const fakeHome = join(scratch, 'fake-home');
 const invalidHome = join(scratch, 'invalid-home');
 const invalidCompiler = join(invalidHome, win ? 'Compilers' : 'compilers', 'pbcompiler' + suffix);
@@ -211,7 +219,18 @@ const fakeCompilerSource = join(scratch, 'fake-compiler.pb');
 writeFileSync(fakeCompilerSource, '\uFEFFEnableExplicit\nIf OpenConsole()\n' +
   `  If ProgramParameter(0) = "${win ? '/VERSION' : '--version'}"\n` +
   '    PrintN("PureBasic 6.41")\n    End 1\n  EndIf\n' +
-  '  ConsoleError("fatal: controlled linker failure")\n  CloseConsole()\nEndIf\nEnd 2\n');
+  '  Define log.s = GetEnvironmentVariable("PBMCP_TEST_ATTEMPTS"), f.i, previous.i\n' +
+  '  If log <> ""\n    f = OpenFile(#PB_Any, log, #PB_File_Append)\n    If f = 0 : End 3 : EndIf\n' +
+  '    previous = Lof(f)\n    WriteStringN(f, "compile", #PB_UTF8)\n    CloseFile(f)\n  EndIf\n' +
+  '  Select GetEnvironmentVariable("PBMCP_TEST_FAILURE")\n' +
+  '    Case "linker"\n      PrintN("Error: Linker")\n      PrintN("error: undefined symbol: PbmcpMissingLinkSymbol")\n' +
+  '    Case "assembler"\n      PrintN("Error: Assembler")\n      PrintN("error: invalid instruction")\n' +
+  '    Case "source-write"\n      PrintN("Error: Line 2 - error: write failed.")\n' +
+  '    Case "write", "recover"\n' +
+  '      If GetEnvironmentVariable("PBMCP_TEST_FAILURE") = "recover" And previous > 0 : End 0 : EndIf\n' +
+  '      PrintN("Error: Assembler")\n      PrintN("error: write failed.")\n' +
+  '    Default\n      ConsoleError("fatal: controlled linker failure")\n  EndSelect\n' +
+  '  CloseConsole()\nEndIf\nEnd 2\n');
 compile(fakeCompilerSource, join(fakeHome, win ? 'Compilers' : 'compilers', 'pbcompiler' + suffix));
 const failureMetrics = join(scratch, 'new-metrics-parent', 'nested', 'metrics.jsonl');
 const failure = invoke('pb_run', { file: hello }, { PUREBASIC_HOME: fakeHome,
@@ -221,6 +240,24 @@ assert.match(text(failure), /controlled linker failure/);
 assert.match(text(failure), /Compiler exited with code 2/);
 assert.equal(JSON.parse(readFileSync(failureMetrics, 'utf8').trim()).ok, false,
   'stderr-only compiler failure was recorded as success');
+const attempts = join(scratch, 'compiler-attempts.txt');
+for (const tool of ['pb_check', 'pb_run']) {
+  for (const [mode, count, diagnostic] of [
+    ['linker', 1, 'PbmcpMissingLinkSymbol'], ['assembler', 1, 'invalid instruction'],
+    ['source-write', 1, 'write failed'], ['write', 2, 'write failed'],
+  ]) {
+    writeFileSync(attempts, '');
+    const failed = invoke(tool, { file: hello }, { PUREBASIC_HOME: fakeHome,
+      PBMCP_TEST_ATTEMPTS: attempts, PBMCP_TEST_FAILURE: mode });
+    assert.equal(failed.result.isError, true, text(failed));
+    assert.ok(text(failed).includes(diagnostic), tool + ': lost compiler detail: ' + text(failed));
+    assert.equal(readFileSync(attempts, 'utf8').trim().split(/\r?\n/).length, count, tool + ': ' + mode + ' retry count');
+  }
+}
+writeFileSync(attempts, '');
+ok(invoke('pb_check', { file: hello }, { PUREBASIC_HOME: fakeHome,
+  PBMCP_TEST_ATTEMPTS: attempts, PBMCP_TEST_FAILURE: 'recover' }));
+assert.equal(readFileSync(attempts, 'utf8').trim().split(/\r?\n/).length, 2, 'temporary write failure did not recover on retry');
 for (const tool of ['pb_check', 'pb_run']) {
   const nestedMetrics = join(scratch, 'metrics-' + tool, 'nested', 'metrics.jsonl');
   ok(invoke(tool, { file: hello }, { PUREBASIC_MCP_NO_METRICS: '0', PUREBASIC_MCP_METRICS: nestedMetrics }));

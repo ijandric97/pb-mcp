@@ -182,20 +182,21 @@ try {
     for (const [name, body] of refCache) {
       if (name !== 'commandindex.html' && body !== null) writeFileSync(join(stage, 'reference', name), body);
     }
+    const referencePages = [...refCache.values()].filter(Boolean).length;
     const manifest = {
       kind: 'online',
       url: base,
       crawledAt: new Date().toISOString(),
-      pages: cmdPages.length + refCache.size + 1,
+      pages: cmdPages.length + referencePages + 1,
       commandPages: cmdPages.length,
-      referencePages: [...refCache.values()].filter(Boolean).length,
+      referencePages,
     };
     writeFileSync(join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2));
     if (!mirrorTargetSafe()) throw new Error(`Refusing to replace a directory without a crawler manifest: ${target}`);
     if (existsSync(target)) renameSync(target, backup);
     renameSync(stage, target);
     published = true;
-    console.log(`mirrored ${cmdPages.length + refCache.size + 1} pages -> ${mirror}`);
+    console.log(`mirrored ${manifest.pages} pages -> ${mirror}`);
   }
 } finally {
   rmSync(stage, { recursive: true, force: true });

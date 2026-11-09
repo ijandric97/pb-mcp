@@ -6,7 +6,7 @@
 ; The shared pieces (process
 ; runner, project staging, diagnostics parsing, retry) live in tool_check.pb.
 ;
-; Invariants (verified live during the spikes):
+; Invariants:
 ;   - the exe is built with an explicit absolute output-switch path: without
 ;     it 5.73 plain /CONSOLE LAUNCHES the compiled program itself - an orphan
 ;     that keeps running after pbcompiler exits and can lock later compiles
@@ -61,7 +61,7 @@ Procedure.s FormatRunResult(*res.RunResultT, File$)
     ElseIf ListSize(*res\compileErrors()) = 0 And *res\compileRes\exitCode <> 0
       out$ + Chr(10) + "Compiler exited with code " + Str(*res\compileRes\exitCode) + "."
     EndIf
-    If ListSize(*res\compileErrors()) = 0
+    If DiagnosticsNeedRaw(*res\compileErrors())
       Protected raw$ = StripCompilerNoise(*res\compileRes\stdout)
       If raw$ <> "" : out$ + Chr(10) + "--- compiler stdout ---" + Chr(10) + CapText(raw$, 4000) : EndIf
     EndIf

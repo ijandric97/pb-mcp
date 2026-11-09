@@ -2,22 +2,19 @@
 ; docs_index.pb - docs index consumption: load + keyword search + command
 ; lookup + did-you-mean.
 ;
-; The
-; schemaVersion 1 includes an optional referenceText map; JSON is produced by
+; Schema version 1 includes an optional referenceText map; JSON is produced by
 ; tools/build-online-index.mjs and reaches the server one of two ways:
 ; dropped as index*.json next to the executable (keeps the exe small, makes
 ; switching PureBasic help versions a file copy) or baked into the binary
-; via the DataSection below (self-contained build). The algorithms are
-; frozen - scoring values, tie-breaking and thresholds are ranking-
-; critical (agent-visible), so no "improvements" here (plan section 7).
+; via the DataSection below (self-contained build). Ranking and lookup
+; behavior are covered by test/run_tests.mjs and test/index.mjs.
 ;
 ;   load       resolution order: PUREBASIC_MCP_INDEX env -> newest
 ;              index*.json next to the executable by mtime -> the
 ;              DataSection-embedded index (src/pbdocs-index.json) ->
 ;              newest index*.json in the cache dir; never
-;              throws. An index with zero commands (the committed
-;              placeholder) is reported as "no index" with an actionable
-;              hint instead of a working-but-empty docs tool.
+;              throws. An index with zero commands is reported as "no index"
+;              with an actionable hint.
 ;   search     tokenize (lowercase, split on non [a-z0-9_$#]); name-first
 ;              scoring 100/80/60/40/30/20 for commands, 90/70/50/30 for
 ;              reference pages; library filter excludes reference; sort
@@ -32,25 +29,20 @@
 ;   #DOCS_URL_BASE$ + index reference "file" = online full-text URL
 ;              (file values are repo-relative like "reference/foo.html").
 ;
-; Index parse cost is the measured 214.8 ms one-time LoadJSON on the 1.9 MB
-; file (RESULTS-6.40.md) - lazy on first docs tool use, process-lifetime
-; cache.
+; Index loading is lazy on the first docs call and cached for the process lifetime.
 ;
 ; Normalized search records (lowercased fields, flattened
 ; parameters) are built once per process after index validation; DocsSearch
 ; scores them with no JSON traversal and no per-request LCase. Scoring
-; values, tie-breaking and every emitted string are unchanged - golden
-; sessions are the regression gate.
+; values and tie-breaking are checked by the acceptance suite.
 ;
 ; Source-encoding rule: UTF-8 WITH BOM (see console.pb header).
 ; ---------------------------------------------------------------------------
 EnableExplicit
 
 ; --- embedded index (DataSection) ------------------------------------------
-; tools/build-online-index.mjs writes the JSON; copying its output over
-; src/pbdocs-index.json and rebuilding bakes it into the binary. The
-; committed placeholder is an empty-but-valid index so the build never
-; depends on a generated artifact. CatchJSON() reads the raw UTF-8 bytes.
+; Source builds generate src/pbdocs-index.json from the installed help.
+; CatchJSON() reads the embedded UTF-8 bytes.
 DataSection
 EmbedIndexStart:
   IncludeBinary "pbdocs-index.json"
@@ -155,7 +147,7 @@ EndProcedure
 ; only. Plain struct members + one flat parameter pair: parameters vary per
 ; command (embedding arrays/lists would mean ~1774 per-element ReDims at
 ; build), and the paramOfs/paramCnt split keeps name/description as separate
-; fields - required by the golden sessions (no substring matches across field
+; fields - required by the search tests (no substring matches across field
 ; boundaries).
 ; A Map would not do here: the scan must visit entries in original index
 ; order (stable ord tie-break) and substring matching cannot use keys.
@@ -643,7 +635,7 @@ EndProcedure
 ; " (reference)" on the query is stripped first - pb_docs_search renders
 ; reference hits as "Title (reference) [reference]" and agents copy that
 ; display form into pb_command verbatim (found live 2026-10-11). Linear
-; scan: 103 titles, cold path, no map warranted.
+; scan over the cached titles and aliases.
 Procedure.i DocsFindReference(Name$)
   DocsIndexEnsure()
   If Not gIndexOk : ProcedureReturn 0 : EndIf

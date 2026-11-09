@@ -107,7 +107,12 @@ try {
   writeFileSync(join(tolerated, 'manifest.json'), previousManifest);
   const ok = await crawl(tolerated);
   assert.equal(ok.code, 0, ok.stderr);
-  assert.equal(JSON.parse(readFileSync(join(tolerated, 'manifest.json'), 'utf8')).kind, 'online');
+  const manifest = JSON.parse(readFileSync(join(tolerated, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.kind, 'online');
+  assert.equal(manifest.pages, 4, '404 reference counted as a mirrored page');
+  assert.equal(manifest.commandPages, 1);
+  assert.equal(manifest.referencePages, 2);
+  assert.match(ok.stdout, /mirrored 4 pages ->/);
   assert.equal(existsSync(join(tolerated, 'reference', 'gone.html')), false, 'stale copy of a 404 page remains');
   assert.equal(existsSync(join(tolerated, 'oldlib', 'removed.html')), false, 'obsolete command page remains after refresh');
 
@@ -126,6 +131,8 @@ try {
   writeFileSync(join(gone410, 'manifest.json'), previousManifest);
   const tolerated410 = await crawl(gone410);
   assert.equal(tolerated410.code, 0, tolerated410.stderr);
+  assert.equal(JSON.parse(readFileSync(join(gone410, 'manifest.json'), 'utf8')).pages, 4, '410 reference counted as a mirrored page');
+  assert.match(tolerated410.stdout, /mirrored 4 pages ->/);
   assert.equal(existsSync(join(gone410, 'reference', 'gone.html')), false, 'stale copy of a 410 page remains');
 
   mode = 'transient';
@@ -134,6 +141,8 @@ try {
   const recovered = await crawl(emptyTarget);
   assert.equal(recovered.code, 0, recovered.stderr);
   assert.equal(transientAttempts, 2, 'transient HTTP 503 was not retried exactly once');
+  assert.equal(JSON.parse(readFileSync(join(emptyTarget, 'manifest.json'), 'utf8')).pages, 5, 'recovered reference omitted from page count');
+  assert.match(recovered.stdout, /mirrored 5 pages ->/);
 
   mode = 'server';
   const failed = join(scratch, 'server-failure');

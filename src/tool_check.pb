@@ -5,13 +5,8 @@
 ; pipelines, the formatting helpers both compiler tools need (truncation/
 ; collapse rules) and the pb_check-specific error hints.
 ;
-; File-scope note vs the plan's module table: the docs-side formatting maps
-; to tools.pb, but
-; its generic string helpers (CapText/OneLine/FirstSentence/CollapseLines) are
-; needed by tool_run.pb, which includes this file EARLIER - so they live here,
-; at the top of the shared pipeline layer. Same for the process runner and
-; temporary output management: both tools use them, split across tool_check.pb and
-; tool_run.pb.
+; Shared formatting, process capture, and temporary output management live
+; here because tool_run.pb is included after this file.
 ;
 ; Pipeline semantics:
 ;   - compile the original source path so relative includes and resources resolve
@@ -20,8 +15,7 @@
 ;   - /CHECK: syntax check only; /CONSOLE /EXE <abs>: build without launching
 ;     (5.73's plain /CONSOLE auto-launches the program - the orphan that
 ;     motivated the whole pipeline; verified harmless-but-correct on 6.40)
-;   - one retry when the compiler fails WITHOUT a line number (AV file-lock
-;     flake: "Error: Assembler / error: write failed.")
+;   - one retry for the known assembler write failure caused by file locks
 ;   - per-run jobs/groups contain descendants on success, timeout, or server exit
 ;   - temp dir always cleaned (retry with backoff; fresh exes are briefly
 ;     AV-locked); cleanup failure is never surfaced
@@ -290,6 +284,15 @@ Procedure ParseDiagnostics(Output$, List Errors.DiagT(), List Warnings.DiagT())
   Wend
 EndProcedure
 
+; Linker/assembler details can follow a generic error without a source line.
+Procedure.i DiagnosticsNeedRaw(List Errors.DiagT())
+  If ListSize(Errors()) = 0 : ProcedureReturn #True : EndIf
+  ForEach Errors()
+    If Errors()\line = 0 : ProcedureReturn #True : EndIf
+  Next
+  ProcedureReturn #False
+EndProcedure
+
 Procedure.s FormatWarnings(List Warnings.DiagT())
   If ListSize(Warnings()) = 0 : ProcedureReturn "" : EndIf
   Protected out$ = Chr(10) + "Warnings (" + Str(ListSize(Warnings())) + "):", shown.i
@@ -319,27 +322,9 @@ Structure RunResT
   durationMs.i
 EndStructure
 
-; Quote one arg for a raw command line; space-free, quote-free args pass
-; through verbatim (byte-identical spawn line on both OSes). RunProgram
-; hands Parameter$ to the child VERBATIM - no re-quoting (probe-sealed
-; 2026-10-13, tmp/probe_parent.pb: the child's GetCommandLine_() equals the
-; parent's Parameter$) - and DQUOTE grouping is identical on both OSes:
-; spike S6 (sealed, live WSL run): from parent Parameter 'a "b c" d' the
-; bash ground-truth child reported ARG[1]=<b c> AND the PB
-; ProgramParameter() child reported PBARG[1]=<b c>, i.e. one argv element,
-; quotes consumed. The older community claim of quotes reaching the child
-; verbatim (forum t=61786/t=81520) is disproven for current PB Linux. The
-; empty arguments use paired quotes; compiler paths are non-empty.
-;
-; Embedded '"' is NOT supported - probe-sealed 2026-10-13
-; (tmp/probe_parent*.pb): a PB child's ProgramParameter() parser treats
-; '\' as literal data and '"' as pure grouping - consumed as a delimiter,
-; never preserved as data ('\' does not escape it, '""' does not fold to a
-; literal). PureBasic children have NO command-line escape mechanism at
-; all, and CommandLineToArgvW '\'-escaping (probed, then REJECTED) injects
-; phantom backslashes into exactly the child population this pipeline
-; spawns: pbcompiler.exe for pb_check, a compiled fixture exe for pb_run -
-; both PB programs. ToolRun therefore rejects quote-bearing arguments.
+; PureBasic children consume grouping quotes and treat backslashes literally.
+; Quote whitespace/empty args; ToolRun rejects embedded quotes because this
+; parser cannot preserve them. Argument regressions live in test/compiler.mjs.
 Procedure.s ProcQ(Arg$)
   If Arg$ = "" : ProcedureReturn Chr(34) + Chr(34) : EndIf
   If FindString(Arg$, " ", 1) Or FindString(Arg$, Chr(9), 1) : ProcedureReturn Chr(34) + Arg$ + Chr(34) : EndIf
@@ -1194,21 +1179,21 @@ EndProcedure
 ; compile step with transient-failure retry
 ; ---------------------------------------------------------------------------
 
-; isTransientCompileFailure: every error is line-less (infra flake).
+; Retry only the observed assembler write failure; other errors need a fix.
 Procedure.i IsTransientCompileFailure(Output$)
   NewList errs.DiagT()
   NewList warns.DiagT()
   ParseDiagnostics(Output$, errs(), warns())
   If ListSize(errs()) = 0 : ProcedureReturn #False : EndIf
   ForEach errs()
-    If errs()\line <> 0 : ProcedureReturn #False : EndIf
+    If errs()\line <> 0 Or LCase(errs()\message) <> "assembler" : ProcedureReturn #False : EndIf
   Next
-  ProcedureReturn #True
+  ProcedureReturn Bool(FindString(LCase(Output$), "error: write failed"))
 EndProcedure
 
 ; CompilerStepWithRetry: cwd pinned to the temp dir; the output switch gets
 ; the absolute output path (suppresses 5.73 auto-launch; correct on 6.40).
-; One retry when the failure is line-less. Switch spellings are per-OS
+; One retry for the known assembler write failure. Switch spellings are per-OS
 ; constants (#SW_* in config.pb): Windows "/CHECK" "/CONSOLE" "/EXE",
 ; Linux "--check" "--console" "--output" - "/"-switches do not exist there.
 Procedure CompilerStepWithRetry(CompilerExe$, Flag$, SrcFile$, ExeOut$, WorkingDir$, *r.RunResT)
@@ -1239,8 +1224,7 @@ Global gHintsReady.i = #False
 Procedure HintsInit()
   gHintUndeclared = CreateRegularExpression(#PB_Any, "\bvariables? have to be declared:\s*(.+)$", #PB_RegularExpression_NoCase)
   gHintConstType  = CreateRegularExpression(#PB_Any, "\bcan'?t have a type\b", #PB_RegularExpression_NoCase)
-  ; probe-sealed 2026-10-13 on 5.73 x86 AND 6.40 x64 (tmp/bp-probe/): identical
-  ; message text on both, so the message regex is version-safe
+  ; The same scope diagnostic is used by the supported compiler versions.
   gHintProcScope  = CreateRegularExpression(#PB_Any, "'(?:protected|static)' can only be used inside a procedure", #PB_RegularExpression_NoCase)
   gHintDimAs      = CreateRegularExpression(#PB_Any, "\bDim\s+\w+\s+As\s+", #PB_RegularExpression_NoCase)
   gHintBadComment = CreateRegularExpression(#PB_Any, "^\s*(?:'|//)", #PB_RegularExpression_NoCase)
@@ -1344,7 +1328,7 @@ EndProcedure
 ; ---------------------------------------------------------------------------
 ; best-practice scan (always-on lint; fires on OK and error results alike)
 ; ---------------------------------------------------------------------------
-; Rules (sealed 2026-10-13, tmp/bp-probe/): only things the compiler silently
+; Rules cover things the compiler silently
 ; ACCEPTS - Global inside a procedure, Goto/Gosub, a file without
 ; EnableExplicit. Rules the compiler already rejects (Protected/Static at
 ; file scope, '$' procedure names) are HINTS in BuildHints above, not here.
@@ -1453,8 +1437,7 @@ EndProcedure
 ; pb_check result
 ; ---------------------------------------------------------------------------
 
-; Line-less errors (POLINK etc.) print as "Line 0: msg" verbatim - the
-; golden sessions pin those bytes, so no beautification here.
+; Keep source diagnostics compact; include raw details for line-less failures.
 Procedure.s FormatCheckResult(StartMs.i, LineCount.i, Ok.i, TimedOut.i, List Errors.DiagT(), List Warnings.DiagT(), RawTail$, File$, SourceText$, List Buckets$())
   Protected out$ = ""
   If Not Ok
@@ -1484,7 +1467,7 @@ Procedure.s FormatCheckResult(StartMs.i, LineCount.i, Ok.i, TimedOut.i, List Err
       If ListSize(Errors()) > shown
         out$ + Chr(10) + "… +" + Str(ListSize(Errors()) - shown) + " more errors"
       EndIf
-      If ListSize(Errors()) = 0 And RawTail$ <> ""
+      If RawTail$ <> ""
         out$ + Chr(10) + "Raw compiler output (last lines):"
         out$ + Chr(10) + RawTail$
       EndIf
@@ -1561,7 +1544,7 @@ Procedure RunCheck(CompilerExe$, AbsFile$, ProjectRoot$, *c.CheckResT)
 
   If proc\spawnFailed
     *c\rawTail = "Compiler failed to start: " + CompilerExe$
-  ElseIf *c\ok = #False And ListSize(*c\errors()) = 0
+  ElseIf *c\ok = #False And DiagnosticsNeedRaw(*c\errors())
     Protected combined$ = proc\stdout
     If TrimAll(proc\stderr) <> "" : combined$ + Chr(10) + proc\stderr : EndIf
     Protected stripped$ = StripCompilerNoise(combined$)

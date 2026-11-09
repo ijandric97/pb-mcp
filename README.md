@@ -171,6 +171,28 @@ interpretation; the root only selects what gets staged:
 
 ## Local verification
 
+During editing, use `./build.cmd check` from Git Bash on Windows or
+`bash build.sh check` on Linux for the encoding and compiler syntax checks.
+These commands do not rebuild the executable. After changing server behavior,
+run `./build.cmd` or `bash build.sh`, then run the relevant standalone tests:
+
+| Change | Local test |
+| ------ | ---------- |
+| MCP requests and framing | `node test/protocol.mjs` |
+| Compiler diagnostics, retries, arguments, or output capture | `node test/compiler.mjs` |
+| Process cleanup or cancellation | `node test/processes.mjs` and `node test/cancellation.mjs` |
+| Documentation scanner, index, or lookup | `node test/index.mjs` |
+| Installed-help indexing or its cache | `node test/local_index.mjs` |
+| Metrics | `node test/metrics.mjs` |
+| Online crawler | `node test/crawler.mjs` |
+| Build or packaging scripts | `node test/build.mjs` and `node test/packaging.mjs` |
+
+Crawler-only edits need no server rebuild; that test uses a local HTTP fixture.
+Standalone server tests use the root executable unless `PBMCP_EXE` selects
+another build. Check that override before testing so it points at the new binary.
+The full suite includes 1,200 startup/shutdown sessions and deliberate timeout
+tests; run it at the acceptance gate below rather than after every small edit.
+
 Run `./build.cmd test` from Git Bash on Windows or `bash build.sh test` on
 Linux before committing changes. Each command builds with the installed
 compiler and matching help, then runs the full acceptance suite against that
@@ -444,7 +466,7 @@ Set `PUREBASIC_HOME` to the installation to test.
     src/metrics.pb     JSONL metrics (frozen record shape), error-bucket classifier
     src/docs_index.pb  docs index cache + search + lookup + did-you-mean
     src/html_scan.pb   native HTML scanner + single-page/batch scan modes
-    src/pbdocs-index.json   embedded docs index (DataSection; placeholder = empty valid index)
+    src/pbdocs-index.json   installed-help index embedded by source builds
     src/tool_check.pb  shared compiler pipeline (staging, spawn/capture, diagnostics) + pb_check
     src/tool_run.pb    pb_run (staged compile/run, timeout, tree-kill)
     src/tools.pb       tool registry, tools/list schemas, docs tool handlers
@@ -454,13 +476,15 @@ Set `PUREBASIC_HOME` to the installation to test.
     tools/fetch-online-docs.mjs   mirror the official online docs
     tools/build-online-index.mjs  docs index + shared reference text from a docs tree
     tools/build-local-index.mjs   matching installed-help index + content cache
-    test/sessions/     golden sessions replayed by `pbmcp.exe test`
+    test/run_tests.mjs     full local acceptance suite; creates isolated JSONL sessions
+    test/fixtures/        compiler sources and deterministic docs index
+    test/fixtures_html_scan/   HTML parser inputs and JSON goldens
 
 ## Source-encoding rule
 
 All `src/*.pb` are **UTF-8 with BOM**. BOM-less UTF-8 is silently misread as
 CP-1252 by the PB compilers; the Node lint in both build scripts enforces the
-BOM, and stub outputs carry a deliberate em-dash canary so an encoding
+BOM, and tool descriptions carry a deliberate em-dash canary so an encoding
 regression is visible in tool output.
 
 ## Status

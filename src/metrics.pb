@@ -15,9 +15,7 @@
 ; Timestamp note: UTC ISO time with a Z suffix remains unambiguous across
 ; machine time zones and daylight-saving changes.
 ;
-; Scope note (plan wording "every tools/call"): ONLY the compiler tools
-; (pb_check, pb_run) are logged - tools/call of the docs tools produce no
-; record (plan section 7).
+; Only compiler tools (pb_check, pb_run) produce metrics records.
 ;
 ; Fire-and-forget rule: a metrics failure must be invisible to the
 ; agent - every failure path returns silently and stdout is never touched.

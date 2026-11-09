@@ -1,18 +1,17 @@
 ﻿; ---------------------------------------------------------------------------
 ; tools.pb - tool registry + tools/list schemas + the two docs tools.
 ;
-; All four tools are live. Compiler handlers live in tool_check.pb
+; Compiler handlers live in tool_check.pb
 ; (pb_check) and tool_run.pb (pb_run); their results are formatted by
 ; FormatCheckResult / FormatRunResult over there, since the include order
 ; puts this file last. This file owns:
 ;   - tools/list schemas (names, titles, descriptions incl. em-dashes,
 ;     property constraints, required arrays, additionalProperties, $schema,
 ;     annotations). PB ComposeJSON alphabetizes object
-;     members (plan gotcha), so WIRE member order is alphabetical by design -
+;     members, so wire member order is alphabetical -
 ;     consumers compare parsed structures, the values are exact.
 ;   - pb_docs_search / pb_command handlers incl. formatSearchResults /
-;     formatCommandEntry and the did-you-mean path (per the plan's module
-;     table)
+;     formatCommandEntry and the did-you-mean path
 ;   - dispatch and protocol errors; metrics live in the compiler handlers
 ;
 ; Source-encoding rule: UTF-8 WITH BOM (see console.pb header). The em-dashes

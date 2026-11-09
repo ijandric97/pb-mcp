@@ -1,5 +1,5 @@
 ﻿; ---------------------------------------------------------------------------
-; main.pb - pbmcp entry point (PureBasic 6.40 x64; binary name per OS:
+; main.pb - pbmcp entry point (PureBasic 6.x x64; binary name per OS:
 ; pbmcp.exe on Windows, pbmcp on Linux).
 ;
 ;   pbmcp                serve MCP over stdio
@@ -7,8 +7,8 @@
 ;   pbmcp --version      PureBasic/docs versions), exit 0 (0.3.3)
 ;   pbmcp scan <html>    parse one command page as JSON
 ;   pbmcp scan-batch <manifest.json>  parse command pages in one process
-;   pbmcp test <file>    replay a golden .jsonl session (one msg per line)
-;   pbmcp <file>         same as "test <file>" (spike compatibility)
+;   pbmcp test <file>    replay a .jsonl session (one msg per line)
+;   pbmcp <file>         alias for "test <file>"
 ;   pbmcp http [--port N] --auth-file PATH [--allow-compiler-tools]
 ;                        authenticated localhost Streamable HTTP (MCP 2025-11-25;
 ;                        binds 127.0.0.1 only; default port 6817)
@@ -16,7 +16,7 @@
 ; Author:  Tureluut - https://www.tureluut.be
 ; License: MIT - see LICENSE in the repository root
 ;
-; Build:  build.cmd            (encoding lint + 6.40 compile)
+; Build:  build.cmd            (encoding lint + installed-help index + compile)
 ; Check:  build.cmd check      (thread-safe /CHECK on the complete source tree)
 ;
 ; Include order matters (single pass): console -> jsonrpc -> config ->
