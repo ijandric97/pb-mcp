@@ -6,9 +6,12 @@
 ; ---------------------------------------------------------------------------
 EnableExplicit
 
-Declare HandleLine(Raw$)
+XIncludeFile "scan_support.pb"
+
+Declare HandleLine(Raw$, ControlOnly.i = #False)
 Declare SendError(IdValue.i, Code.i, Message$)
 Declare RunStdin(File.i = 0)
+Declare PollControlMessages()
 
 CompilerIf #PB_Compiler_OS = #PB_OS_Linux
 ; Raw read(2) for the stdin loop (see RunStdin) + dup/close for the capture
@@ -40,7 +43,14 @@ ImportC ""
   StdinRead(fd.i, *buf, count.i) As "read"
   StdinDupFd(fd.i, cmd.i, arg.i) As "fcntl"
   StdinClose(fd.i) As "close"
+  StdinPoll(*fds, count.i, timeout.l) As "poll"
 EndImport
+
+Structure StdinPollFdT
+  fd.l
+  events.w
+  revents.w
+EndStructure
 
 Global gStdinFd.i = -1
 CompilerEndIf
@@ -55,17 +65,6 @@ Procedure StdinCapture()
   CompilerEndIf
 EndProcedure
 
-; One UTF-8, LF-framed line to stdout (the MCP protocol channel).
-Procedure WriteLine(Text$)
-  Protected s$ = Text$ + Chr(10)
-  Protected len.i = StringByteLength(s$, #PB_UTF8)
-  Protected *buf = AllocateMemory(len + 1)
-  If *buf = 0 : End 1 : EndIf   ; OOM: the protocol line cannot be built
-  PokeS(*buf, s$, -1, #PB_UTF8)
-  WriteConsoleData(*buf, len)
-  FreeMemory(*buf)
-EndProcedure
-
 ; Golden-session mode: one client message per line, responses to stdout.
 ; Missing file -> stderr note + exit code 1 (this is a test runner).
 Procedure RunFile(Path$)
@@ -78,112 +77,157 @@ Procedure RunFile(Path$)
   CloseFile(f)
 EndProcedure
 
-; Decode one complete raw line (bytes, no trailing LF) and hand it to the
-; protocol layer. CRLF tolerated: trailing CR bytes are stripped BEFORE the
-; UTF-8 decode, so a 0x0D can never end up inside a multibyte sequence.
-; Empty lines (numBytes = 0) are dropped - HandleLine ignores them anyway,
-; this just avoids a wasted PeekS.
-Procedure HandleRawLine(*bytes, numBytes.i)
-  While numBytes > 0 And PeekA(*bytes + numBytes - 1) = 13
-    numBytes - 1
-  Wend
-  If numBytes = 0 : ProcedureReturn : EndIf
-  Protected i.i
-  For i = 0 To numBytes - 1
-    If PeekA(*bytes + i) = 0
-      SendError(0, -32600, "NUL bytes are not supported in request lines")
-      ProcedureReturn
-    EndIf
-  Next
-  ; #PB_ByteLength is REQUIRED: PeekS' Length counts characters for #PB_UTF8
-  ; unless this flag is set - without it, a byte-count silently truncates the
-  ; line mid-character and every multibyte line turns into a parse error.
-  HandleLine(PeekS(*bytes, numBytes, #PB_UTF8 | #PB_ByteLength))
-EndProcedure
-
-; Live/replay reader - The buffer holds RAW bytes;
-; UTF-8 decoding happens only on complete LF-framed lines, so a chunk can end
-; mid-character without harm. Buffer doubles on demand for long lines.
-;
-; Scan discipline: pending bytes (indices < len-n) are guaranteed LF-free
-; (they were scanned after the previous read), so only the new region needs
-; scanning - but a line may START in the old region, hence the absolute
-; `start` cursor and the one MoveMemory compaction per chunk.
 #STDIN_CHUNK = 65536
 #MAX_FRAME_BYTES = 1048576
 
-Procedure RunStdin(File.i = 0)
-  Protected cap.i = #STDIN_CHUNK
-  Protected *buf = AllocateMemory(cap)
-  If *buf = 0 : End 1 : EndIf
-  Protected len.i = 0, n.i, start.i, i.i, errStreak.i, discarding.i
-  CompilerIf #PB_Compiler_OS = #PB_OS_Linux
-    Protected fd.i = gStdinFd      ; the captured stdin (see StdinCapture);
-    If fd < 0 : fd = 0 : EndIf     ; uncaptured degenerate case: try fd 0
-  CompilerEndIf
-  Repeat
-    If len >= cap
-      cap * 2
-      If cap > #MAX_FRAME_BYTES + 1 : cap = #MAX_FRAME_BYTES + 1 : EndIf
-      *buf = ReAllocateMemory(*buf, cap)
-      If *buf = 0 : End 1 : EndIf
+Structure InputFrameT
+  text.s
+  error.s
+EndStructure
+
+Global gInputActive.i, gInputFile.i, gInputEof.i, gInputDiscarding.i
+Global *gInputBuffer, gInputCapacity.i, gInputLength.i, gInputScan.i, gInputErrors.i
+Global NewList gPendingInput.InputFrameT()
+Global gPendingInputChars.i
+
+Procedure QueueInput(Text$, Error$ = "")
+  If Text$ = "" And Error$ = "" : ProcedureReturn : EndIf
+  LastElement(gPendingInput())
+  AddElement(gPendingInput())
+  gPendingInput()\text = Text$
+  gPendingInput()\error = Error$
+  gPendingInputChars + Len(Text$) + Len(Error$)
+EndProcedure
+
+Procedure DecodeInputFrame(*frame.InputFrameT, Bytes.i)
+  While Bytes > 0 And PeekA(*gInputBuffer + Bytes - 1) = 13 : Bytes - 1 : Wend
+  Protected i.i
+  For i = 0 To Bytes - 1
+    If PeekA(*gInputBuffer + i) = 0
+      *frame\error = "NUL bytes are not supported in request lines"
+      ProcedureReturn
     EndIf
-    If File
-      n = ReadData(File, *buf + len, cap - len)
-      If n < 0 : n = 0 : EndIf
+  Next
+  If Bytes > 0 : *frame\text = PeekS(*gInputBuffer, Bytes, #PB_UTF8 | #PB_ByteLength) : EndIf
+EndProcedure
+
+; One complete frame, zero when polling would block, or -1 at EOF.
+Procedure.i ReadInputFrame(*frame.InputFrameT, Wait.i)
+  Protected i.i, consumed.i, n.i, available.i, ready.i
+  *frame\text = "" : *frame\error = ""
+  Repeat
+    consumed = 0
+    For i = gInputScan To gInputLength - 1
+      If PeekA(*gInputBuffer + i) = 10
+        ready = Bool(Not gInputDiscarding)
+        If ready
+          If i > #MAX_FRAME_BYTES
+            *frame\error = "Request line exceeds 1048576 bytes"
+          Else
+            DecodeInputFrame(*frame, i)
+          EndIf
+        EndIf
+        consumed = i + 1
+        MoveMemory(*gInputBuffer + consumed, *gInputBuffer, gInputLength - consumed)
+        gInputLength - consumed : gInputScan = 0 : gInputDiscarding = #False
+        If ready : ProcedureReturn 1 : EndIf
+        Break
+      EndIf
+    Next
+    If consumed : Continue : EndIf
+    gInputScan = gInputLength
+    If gInputLength > #MAX_FRAME_BYTES And Not gInputDiscarding
+      gInputDiscarding = #True
+      gInputLength = 0 : gInputScan = 0
+      *frame\error = "Request line exceeds 1048576 bytes"
+      ProcedureReturn 1
+    EndIf
+    If gInputDiscarding : gInputLength = 0 : gInputScan = 0 : EndIf
+    If gInputEof
+      If gInputLength > 0
+        DecodeInputFrame(*frame, gInputLength)
+        gInputLength = 0 : gInputScan = 0
+        ProcedureReturn 1
+      EndIf
+      ProcedureReturn -1
+    EndIf
+    If gInputLength >= gInputCapacity
+      gInputCapacity * 2
+      If gInputCapacity > #MAX_FRAME_BYTES + 1 : gInputCapacity = #MAX_FRAME_BYTES + 1 : EndIf
+      Protected *grown = ReAllocateMemory(*gInputBuffer, gInputCapacity)
+      If *grown = 0 : End 1 : EndIf
+      *gInputBuffer = *grown
+    EndIf
+    available = gInputCapacity - gInputLength
+    If gInputFile
+      n = ReadData(gInputFile, *gInputBuffer + gInputLength, available)
     Else
       CompilerIf #PB_Compiler_OS = #PB_OS_Windows
-        n = ReadConsoleData(*buf + len, cap - len)
-      CompilerElse
-        n = StdinRead(fd, *buf + len, cap - len)
-        If n < 0
-          ; Retry transient errors, but stop after persistent read failure.
-          errStreak + 1
-          If errStreak > 64 : n = 0 : EndIf
-        Else
-          errStreak = 0
+        If Not Wait
+          Protected handle.i = GetStdHandle_(#STD_INPUT_HANDLE), bytes.l, kind.i = GetFileType_(handle)
+          If kind = #FILE_TYPE_PIPE
+            If PeekNamedPipe_(handle, 0, 0, 0, @bytes, 0) = 0
+              gInputEof = #True : Continue
+            EndIf
+            If bytes <= 0 : ProcedureReturn 0 : EndIf
+            If available > bytes : available = bytes : EndIf
+          ElseIf kind <> #FILE_TYPE_DISK
+            ProcedureReturn 0
+          EndIf
         EndIf
+        n = ReadConsoleData(*gInputBuffer + gInputLength, available)
+      CompilerElse
+        If Not Wait
+          Protected poll.StdinPollFdT
+          poll\fd = gStdinFd : poll\events = 1 ; POLLIN; HUP also permits the EOF read.
+          If StdinPoll(@poll, 1, 0) <= 0 : ProcedureReturn 0 : EndIf
+        EndIf
+        n = StdinRead(gStdinFd, *gInputBuffer + gInputLength, available)
       CompilerEndIf
     EndIf
     If n > 0
-      len + n
-      start = 0
-      For i = len - n To len - 1       ; scan new bytes only
-        If PeekA(*buf + i) = 10        ; LF: complete line [start .. i)
-          If discarding
-            discarding = #False
-          ElseIf i - start > #MAX_FRAME_BYTES
-            SendError(0, -32600, "Request line exceeds 1048576 bytes")
-          Else
-            HandleRawLine(*buf + start, i - start)
-          EndIf
-          start = i + 1
-        EndIf
-      Next
-      If start > 0                     ; compact the partial-line remainder
-        MoveMemory(*buf + start, *buf, len - start)
-        len - start
-      EndIf
-      If len > #MAX_FRAME_BYTES And discarding = #False
-        SendError(0, -32600, "Request line exceeds 1048576 bytes")
-        discarding = #True
-      EndIf
-      If discarding : len = 0 : EndIf
+      gInputLength + n : gInputErrors = 0
+    ElseIf n = 0
+      gInputEof = #True
+    Else
+      gInputErrors + 1
+      If gInputErrors > 64 : gInputEof = #True : EndIf
+      If Not Wait : ProcedureReturn 0 : EndIf
+      Delay(5)
     EndIf
-  Until n = 0
-  If len > 0 : HandleRawLine(*buf, len) : EndIf  ; last line without LF
-  CompilerIf #PB_Compiler_OS = #PB_OS_Linux
-    If File = 0 And gStdinFd >= 0             ; release the captured stdin
-      StdinClose(gStdinFd)
-      gStdinFd = -1
-    EndIf
-  CompilerEndIf
-  FreeMemory(*buf)
+    If Not Wait And gInputDiscarding : ProcedureReturn 0 : EndIf
+  ForEver
 EndProcedure
 
-; IDE Options = PureBasic 6.40 (Windows - x64)
-; CursorPosition = 89
-; FirstLine = 50
-; Folding = -
-; EnableXP
-; DPIAware
+Procedure RunStdin(File.i = 0)
+  gInputActive = #True : gInputFile = File : gInputEof = #False
+  gInputCapacity = #STDIN_CHUNK : gInputLength = 0 : gInputScan = 0
+  gInputDiscarding = #False : gInputErrors = 0
+  *gInputBuffer = AllocateMemory(gInputCapacity)
+  If *gInputBuffer = 0 : End 1 : EndIf
+  Protected frame.InputFrameT, status.i
+  Repeat
+    If FirstElement(gPendingInput())
+      frame\text = gPendingInput()\text : frame\error = gPendingInput()\error
+      gPendingInputChars - Len(frame\text) - Len(frame\error)
+      DeleteElement(gPendingInput())
+      status = 1
+    Else
+      status = ReadInputFrame(@frame, #True)
+    EndIf
+    If status = 1
+      If frame\error <> ""
+        SendError(0, -32600, frame\error)
+      Else
+        HandleLine(frame\text)
+      EndIf
+    EndIf
+  Until status = -1
+  gInputActive = #False
+  CompilerIf #PB_Compiler_OS = #PB_OS_Linux
+    If File = 0 And gStdinFd >= 0
+      StdinClose(gStdinFd) : gStdinFd = -1
+    EndIf
+  CompilerEndIf
+  FreeMemory(*gInputBuffer) : *gInputBuffer = 0
+EndProcedure

@@ -20,6 +20,13 @@ Global gHttpCapturedResponse.s = ""
 
 Global gBatchActive.i = #False
 Global gBatchResponses$ = ""
+Global gActiveRequestId$ = ""
+Global gRequestCancelled.i
+
+Procedure.s RequestIdKey(Value.i)
+  If JSONType(Value) = #PB_JSON_String : ProcedureReturn "s:" + GetJSONString(Value) : EndIf
+  ProcedureReturn "n:" + Str(GetJSONInteger(Value))
+EndProcedure
 
 CompilerIf Not Defined(PBMCP_REVISION$, #PB_Constant)
   #PBMCP_REVISION$ = "unknown"
@@ -32,57 +39,6 @@ EndProcedure
 ; NO global output cap: truncation happens inside the formatters (docs
 ; search 8000 / command 14000 / check 8000 / run caps) - a global cap here
 ; would clip long pb_run results that fit under their per-tool caps.
-
-; ---------------------------------------------------------------------------
-; JSON string escaping (shared with metrics.pb; metrics.pb used to carry a
-; private copy, hoisted here).
-; ---------------------------------------------------------------------------
-Procedure.s JsonEscape(s$)
-  Protected out$ = ReplaceString(s$, "\", "\\")
-  out$ = ReplaceString(out$, Chr(34), "\" + Chr(34))
-  out$ = ReplaceString(out$, Chr(8), "\b")
-  out$ = ReplaceString(out$, Chr(12), "\f")
-  out$ = ReplaceString(out$, Chr(10), "\n")
-  out$ = ReplaceString(out$, Chr(13), "\r")
-  out$ = ReplaceString(out$, Chr(9), "\t")
-  ; The replaces above already turned \b \f \n \r \t into plain
-  ; two-char text, so the only chars < 32 still present are 0-7, 11 and
-  ; 14-31 - rare in practice. Scan for them on the raw buffer (PeekU reads
-  ; the same code units the old per-char Asc(Mid()) loop compared;
-  ; SizeOf(Character) keeps the stride correct; Unicode build assumed by
-  ; PeekU). Strings without a control char - the normal case - return in
-  ; one piece; otherwise whole spans between controls are appended with
-  ; one Mid() each, followed by the identical "\u00xx" escape. Byte-for-
-  ; byte output equivalence with the old per-char loop is verified
-  ; exhaustively (140/140 identical incl. all controls 0-31,
-  ; surrogate pair, U+FFFD, multibyte).
-  Protected i.i, n.i = Len(out$), start.i, c.i, res$ = "", *p
-  If n = 0 : ProcedureReturn "" : EndIf
-  *p = @out$
-  For i = 0 To n - 1
-    If PeekU(*p + i * SizeOf(Character)) < 32 : Break : EndIf
-  Next
-  If i >= n : ProcedureReturn out$ : EndIf
-  start = 1
-  While start <= n
-    *p = @out$ + (start - 1) * SizeOf(Character)
-    i = 0
-    While start + i <= n And PeekU(*p + i * SizeOf(Character)) >= 32 : i + 1 : Wend
-    If i > 0 : res$ + Mid(out$, start, i) : EndIf
-    If start + i <= n
-      c = PeekU(*p + i * SizeOf(Character))
-      res$ + "\u00" + RSet(Hex(c), 2, "0")
-      start = start + i + 1
-    Else
-      Break
-    EndIf
-  Wend
-  ProcedureReturn res$
-EndProcedure
-
-Procedure.s JsonQ(s$)
-  ProcedureReturn Chr(34) + JsonEscape(s$) + Chr(34)
-EndProcedure
 
 ; ---------------------------------------------------------------------------
 ; response builders
@@ -150,6 +106,7 @@ EndProcedure
 
 ; tools/call result with a single text content item
 Procedure SendTextResult(IdValue.i, Text$, IsError.i)
+  If gRequestCancelled And RequestIdKey(IdValue) = gActiveRequestId$ : ProcedureReturn : EndIf
   Protected json.i = BeginResponse(IdValue)
   Protected result.i = GetJSONMember(JSONValue(json), "result")
   Protected content.i = AddJSONMember(result, "content")
@@ -162,14 +119,6 @@ Procedure SendTextResult(IdValue.i, Text$, IsError.i)
   FinishResponse(json)
 EndProcedure
 
-Procedure.s MemberStr(Obj.i, Key$, Default$)
-  If Obj = 0 : ProcedureReturn Default$ : EndIf
-  Protected m.i = GetJSONMember(Obj, Key$)
-  If m And JSONType(m) = #PB_JSON_String
-    ProcedureReturn GetJSONString(m)
-  EndIf
-  ProcedureReturn Default$
-EndProcedure
 
 ; invalid_type wording for "Expected X, received Y": JSON type -> name
 Procedure.s JsonTypeName(Value.i)
@@ -245,26 +194,13 @@ EndProcedure
 ; ---------------------------------------------------------------------------
 ; request dispatch
 ; ---------------------------------------------------------------------------
-; PB strings truncate at NUL, so reject its JSON escape before decoding.
-Procedure.i JsonHasNul(Text$)
-  Protected pos.i = FindString(Text$, "\u0000"), before.i
-  While pos
-    before = pos - 1
-    While before > 0 And PeekU(@Text$ + (before - 1) * SizeOf(Character)) = 92
-      before - 1
-    Wend
-    If (pos - before) & 1 : ProcedureReturn #True : EndIf
-    pos = FindString(Text$, "\u0000", pos + 6)
-  Wend
-  ProcedureReturn #False
-EndProcedure
-
 #MAX_JSON_DEPTH = 128
 
 ; Guard the native parser and retain numeric IDs before floating-point rounding.
 Procedure.i JsonPreflight(Text$, Map NumericIds.s(), *integerOverflow.Integer)
   Protected i.i = 1, length.i = Len(Text$), c.i, start.i, real.i, limit$
   Protected depth.i, requestDepth.i, request.i, idStart.i, key$, keyPos.i
+  Protected paramsStart.i, paramsDepth.i, cancelStart.i, keyJson.i
   *integerOverflow\i = #False
   While i <= length
     c = PeekU(@Text$ + (i - 1) * SizeOf(Character))
@@ -280,9 +216,16 @@ Procedure.i JsonPreflight(Text$, Map NumericIds.s(), *integerOverflow.Integer)
           Break
         EndIf
       Wend
-      If depth = requestDepth
+      If depth = requestDepth Or (paramsDepth > 0 And depth = paramsDepth)
         key$ = Mid(Text$, start + 1, i - start - 2)
-        If key$ = "id" Or key$ = "\u0069d" Or key$ = "i\u0064" Or key$ = "\u0069\u0064"
+        If FindString(key$, "\")
+          keyJson = ParseJSON(#PB_Any, Mid(Text$, start, i - start))
+          If keyJson
+            key$ = GetJSONString(JSONValue(keyJson))
+            FreeJSON(keyJson)
+          EndIf
+        EndIf
+        If (depth = requestDepth And (key$ = "id" Or key$ = "params")) Or (depth = paramsDepth And key$ = "requestId")
           keyPos = i
           While keyPos <= length And FindString(" " + Chr(9) + Chr(10) + Chr(13), Mid(Text$, keyPos, 1))
             keyPos + 1
@@ -292,8 +235,16 @@ Procedure.i JsonPreflight(Text$, Map NumericIds.s(), *integerOverflow.Integer)
             While keyPos <= length And FindString(" " + Chr(9) + Chr(10) + Chr(13), Mid(Text$, keyPos, 1))
               keyPos + 1
             Wend
-            idStart = keyPos
-            DeleteMapElement(NumericIds(), Str(request))
+            If depth = requestDepth And key$ = "id"
+              idStart = keyPos
+              DeleteMapElement(NumericIds(), Str(request))
+            ElseIf depth = requestDepth And key$ = "params"
+              paramsStart = keyPos : paramsDepth = 0 : cancelStart = 0
+              DeleteMapElement(NumericIds(), "cancel" + Str(request))
+            Else
+              cancelStart = keyPos
+              DeleteMapElement(NumericIds(), "cancel" + Str(request))
+            EndIf
           EndIf
         EndIf
       EndIf
@@ -318,12 +269,17 @@ Procedure.i JsonPreflight(Text$, Map NumericIds.s(), *integerOverflow.Integer)
       If idStart = start Or (idStart = start - 1 And limit$ = "9223372036854775808")
         NumericIds(Str(request)) = Mid(Text$, idStart, i - idStart)
       EndIf
+      If cancelStart = start Or (cancelStart = start - 1 And limit$ = "9223372036854775808")
+        NumericIds("cancel" + Str(request)) = Mid(Text$, cancelStart, i - cancelStart)
+      EndIf
     Else
       If c = 123 Or c = 91
         If depth = 0 : requestDepth = 1 + Bool(c = 91) : EndIf
         depth + 1
+        If i = paramsStart And c = 123 : paramsDepth = depth : EndIf
         If depth > #MAX_JSON_DEPTH : ProcedureReturn #False : EndIf
       ElseIf c = 125 Or c = 93
+        If depth = paramsDepth : paramsDepth = 0 : EndIf
         depth - 1
       ElseIf c = 44 And depth = 1 And requestDepth = 2
         request + 1
@@ -367,7 +323,26 @@ Procedure.i JsonIdInteger(Token$, *number.Quad)
   ProcedureReturn #True
 EndProcedure
 
-Procedure HandleRequest(Root.i, NumericId$)
+Procedure HandleCancellation(Root.i, NumericId$)
+  If JSONType(Root) <> #PB_JSON_Object : ProcedureReturn : EndIf
+  If MemberStr(Root, "jsonrpc", "") <> "2.0" Or GetJSONMember(Root, "id") : ProcedureReturn : EndIf
+  Protected params.i = GetJSONMember(Root, "params"), target.i, reason.i, number.q, key$
+  If params = 0 Or JSONType(params) <> #PB_JSON_Object : ProcedureReturn : EndIf
+  reason = GetJSONMember(params, "reason")
+  If reason And JSONType(reason) <> #PB_JSON_String : ProcedureReturn : EndIf
+  target = GetJSONMember(params, "requestId")
+  If target = 0 : ProcedureReturn : EndIf
+  If JSONType(target) = #PB_JSON_String
+    key$ = RequestIdKey(target)
+  ElseIf JSONType(target) = #PB_JSON_Number And JsonIdInteger(NumericId$, @number)
+    key$ = "n:" + Str(number)
+  Else
+    ProcedureReturn
+  EndIf
+  If gActiveRequestId$ <> "" And key$ = gActiveRequestId$ : gRequestCancelled = #True : EndIf
+EndProcedure
+
+Procedure HandleRequest(Root.i, NumericId$, CancelId$ = "")
   If JSONType(Root) <> #PB_JSON_Object
     SendError(0, -32600, "Invalid Request")
     ProcedureReturn
@@ -452,7 +427,17 @@ Procedure HandleRequest(Root.i, NumericId$)
     Case "tools/list"
       If Not isNotify : ToolList(idM) : EndIf
     Case "tools/call"
-      If Not isNotify : ToolDispatch(idM, params) : EndIf
+      If Not isNotify
+        gActiveRequestId$ = RequestIdKey(idM) : gRequestCancelled = #False
+        ToolDispatch(idM, params)
+        gActiveRequestId$ = "" : gRequestCancelled = #False
+      EndIf
+    Case "notifications/cancelled"
+      If isNotify
+        HandleCancellation(Root, CancelId$)
+      Else
+        SendError(idM, -32601, "Method not found: " + method$)
+      EndIf
     Case "ping"
       If Not isNotify
         Protected pong.i = BeginResponse(idM)
@@ -467,41 +452,85 @@ Procedure HandleRequest(Root.i, NumericId$)
   EndSelect
 EndProcedure
 
-Procedure HandleLine(Raw$)
+Procedure HandleLine(Raw$, ControlOnly.i = #False)
   Protected line$ = RTrim(Trim(Raw$), Chr(13))
   If line$ = "" : ProcedureReturn : EndIf
   If JsonHasNul(line$)
+    If ControlOnly : QueueInput(Raw$) : ProcedureReturn : EndIf
     SendError(0, -32600, "NUL characters are not supported in JSON strings")
     ProcedureReturn
   EndIf
   NewMap numericIds.s()
   Protected integerOverflow.i
   If Not JsonPreflight(line$, numericIds(), @integerOverflow)
+    If ControlOnly : QueueInput(Raw$) : ProcedureReturn : EndIf
     SendError(0, -32600, "JSON nesting exceeds " + Str(#MAX_JSON_DEPTH) + " levels")
     ProcedureReturn
   EndIf
   Protected json.i = ParseJSON(#PB_Any, line$)
   If json = 0
+    If ControlOnly : QueueInput(Raw$) : ProcedureReturn : EndIf
     SendError(0, -32700, "Parse error")
     ProcedureReturn
   EndIf
   If integerOverflow
     FreeJSON(json)
+    If ControlOnly : QueueInput(Raw$) : ProcedureReturn : EndIf
     SendError(0, -32600, "JSON integer is outside the signed 64-bit range")
     ProcedureReturn
   EndIf
   Protected root.i = JSONValue(json), i.i
+  If ControlOnly
+    Protected controlMethod$
+    If JSONType(root) = #PB_JSON_Object : controlMethod$ = MemberStr(root, "method", "") : EndIf
+    If controlMethod$ = "ping" Or controlMethod$ = "notifications/cancelled"
+      HandleRequest(root, numericIds("0"), numericIds("cancel0"))
+    Else
+      ; A batch keeps its response envelope; its cancellation notifications can act now.
+      If JSONType(root) = #PB_JSON_Array
+        For i = 0 To JSONArraySize(root) - 1
+          Protected entry.i = GetJSONElement(root, i)
+          If JSONType(entry) = #PB_JSON_Object
+            If MemberStr(entry, "method", "") = "notifications/cancelled"
+              HandleCancellation(entry, numericIds("cancel" + Str(i)))
+            EndIf
+          EndIf
+        Next
+      EndIf
+      QueueInput(Raw$)
+    EndIf
+    FreeJSON(json)
+    ProcedureReturn
+  EndIf
   If JSONType(root) = #PB_JSON_Array And JSONArraySize(root) > 0
     gBatchActive = #True
     gBatchResponses$ = ""
     For i = 0 To JSONArraySize(root) - 1
-      HandleRequest(GetJSONElement(root, i), numericIds(Str(i)))
+      HandleRequest(GetJSONElement(root, i), numericIds(Str(i)), numericIds("cancel" + Str(i)))
     Next
     gBatchActive = #False
     If gBatchResponses$ <> "" : WriteLine("[" + gBatchResponses$ + "]") : EndIf
     gBatchResponses$ = ""
   Else
-    HandleRequest(root, numericIds("0"))
+    HandleRequest(root, numericIds("0"), numericIds("cancel0"))
   EndIf
   FreeJSON(json)
+EndProcedure
+
+Procedure PollControlMessages()
+  If Not gInputActive Or gActiveRequestId$ = "" : ProcedureReturn : EndIf
+  Protected frame.InputFrameT, i.i, batch.i = gBatchActive
+  ; Separate frames must never append their responses to an active batch.
+  gBatchActive = #False
+  For i = 1 To 4
+    ; Bound deferred input; the pipe supplies backpressure for larger pipelines.
+    If gPendingInputChars >= #MAX_FRAME_BYTES : Break : EndIf
+    If ReadInputFrame(@frame, #False) <> 1 : Break : EndIf
+    If frame\error <> ""
+      QueueInput("", frame\error)
+    Else
+      HandleLine(frame\text, #True)
+    EndIf
+  Next
+  gBatchActive = batch
 EndProcedure

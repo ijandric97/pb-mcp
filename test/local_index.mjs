@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cachedIndexMatches, checkHelpVersion, findLocalHelp, helpHash } from '../tools/build-local-index.mjs';
+import { cachedIndexMatches, checkHelpVersion, findLocalHelp, helpHash, parserFingerprint } from '../tools/build-local-index.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const scratch = join(root, 'test', 'out', 'local-index');
@@ -56,6 +56,22 @@ for (const field of ['path', 'sha256', 'compiler', 'compilerVersion', 'compilerS
   assert.ok(!cachedIndexMatches(fixture, { ...source, [field]: 'changed' }, '6.41'), `${field} change did not invalidate cache`);
 }
 
+const parserInputs = join(scratch, 'parser-inputs');
+mkdirSync(join(parserInputs, 'tools'), { recursive: true });
+mkdirSync(join(parserInputs, 'src'));
+for (const file of ['tools/build-local-index.mjs', 'tools/build-online-index.mjs', 'src/scan_main.pb',
+  'src/scan_support.pb', 'src/html_scan.pb', 'src/metrics.pb']) {
+  writeFileSync(join(parserInputs, file), readFileSync(join(root, file)));
+}
+const parserHash = parserFingerprint(parserInputs);
+writeFileSync(join(parserInputs, 'src/metrics.pb'), 'unrelated runtime change');
+assert.equal(parserFingerprint(parserInputs), parserHash, 'unrelated runtime changes invalidated the parser cache');
+writeFileSync(join(parserInputs, 'src/scan_support.pb'), 'changed shared scanner helper');
+assert.notEqual(parserFingerprint(parserInputs), parserHash, 'scanner helper changes did not invalidate the cache');
+writeFileSync(join(parserInputs, 'src/scan_support.pb'), readFileSync(join(root, 'src/scan_support.pb')));
+writeFileSync(join(parserInputs, 'src/html_scan.pb'), 'changed HTML parser');
+assert.notEqual(parserFingerprint(parserInputs), parserHash, 'HTML parser changes did not invalidate the cache');
+
 // Exercise actual installed help, bootstrap compilation, and the warm cache.
 const win = process.platform === 'win32';
 const exe = resolve(process.env.PBMCP_EXE || join(root, win ? 'pbmcp.exe' : 'pbmcp'));
@@ -65,6 +81,21 @@ const installation = report.stdout.match(/^PureBasic (\d+\.\d+) - (.+)$/m);
 assert.ok(installation, report.stdout);
 const [, version, installedHome] = installation;
 const compiler = join(installedHome.trim(), win ? 'Compilers' : 'compilers', win ? 'pbcompiler.exe' : 'pbcompiler');
+const scanExe = join(scratch, win ? 'scan-only.exe' : 'scan-only');
+const scanBuildArgs = win
+  ? ['/THREAD', '/CONSOLE', join(root, 'src', 'scan_main.pb'), '/EXE', scanExe]
+  : ['--thread', '--console', join(root, 'src', 'scan_main.pb'), '--output', scanExe];
+const scanBuild = spawnSync(compiler, scanBuildArgs, { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+assert.equal(scanBuild.status, 0, scanBuild.stderr || scanBuild.stdout);
+const page = join(scratch, 'scanner-parity.html');
+const manifest = join(scratch, 'scanner-parity.json');
+writeFileSync(page, '<html><head><title>DemoCommand</title></head><body><b>Syntax</b><p>DemoCommand()</p><b>Description</b><p>Small scanner parity fixture.</p></body></html>');
+writeFileSync(manifest, JSON.stringify([{ path: page, library: 'test', file: 'test/DemoCommand.html' }]));
+const fullScan = spawnSync(exe, ['scan-batch', manifest], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
+const isolatedScan = spawnSync(scanExe, ['scan-batch', manifest], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
+assert.equal(fullScan.status, 0, fullScan.stderr);
+assert.equal(isolatedScan.status, 0, isolatedScan.stderr);
+assert.equal(isolatedScan.stdout, fullScan.stdout, 'scanner-only entry changed scan-batch output');
 const output = join(scratch, 'generated', 'index.json');
 function build(selectedCompiler = compiler) {
   return spawnSync(process.execPath, [join(root, 'tools', 'build-local-index.mjs'), '--compiler', selectedCompiler, '--out', output],

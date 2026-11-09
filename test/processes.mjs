@@ -141,9 +141,10 @@ try {
   assert.ifError(stdinFailure);
   const responses = stdinOutput.trim().split('\n').map(JSON.parse);
   assert.equal(responses.length, 2, stdinOutput);
-  assert.equal(responses[0].result.isError, false, stdinOutput);
-  assert.match(responses[0].result.content[0].text, /stdin-bytes=0/);
-  assert.deepEqual(responses[1], { jsonrpc: '2.0', id: 2, result: {} }, 'child consumed an MCP request');
+  const runResponse = responses.find(response => response.id === 1);
+  assert.equal(runResponse.result.isError, false, stdinOutput);
+  assert.match(runResponse.result.content[0].text, /stdin-bytes=0/);
+  assert.deepEqual(responses.find(response => response.id === 2), { jsonrpc: '2.0', id: 2, result: {} }, 'child consumed an MCP request');
 } finally {
   clearTimeout(stdinTimer);
   if (stdinServer.exitCode === null) stdinServer.kill('SIGKILL');

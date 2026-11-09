@@ -762,6 +762,7 @@ Procedure RunScanBatchMode()
   FreeJSON(json)
 EndProcedure
 
+CompilerIf Not Defined(PBMCP_BATCH_SCANNER, #PB_Constant)
 Procedure RunScanMode()
   Protected path$ = ProgramParameter(1), library$ = ProgramParameter(2), relfile$ = ProgramParameter(3)
   If path$ = ""
@@ -772,3 +773,4 @@ Procedure RunScanMode()
   If relfile$ = "" : relfile$ = library$ + "/" + GetFilePart(path$) : EndIf
   ScanCommandPage(path$, library$, relfile$)
 EndProcedure
+CompilerEndIf

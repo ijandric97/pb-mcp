@@ -315,6 +315,7 @@ Structure RunResT
   stdout.s
   stderr.s
   timedOut.i
+  cancelled.i
   durationMs.i
 EndStructure
 
@@ -560,6 +561,8 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
   *r\stdout = ""
   *r\stderr = ""
   *r\timedOut = #False
+  *r\cancelled = gRequestCancelled
+  If *r\cancelled : ProcedureReturn : EndIf
   Protected t0.i = ElapsedMilliseconds()
   Protected p.i, errorPipe.ErrorPipeT
   Protected *scratch = AllocateMemory(65536)
@@ -609,10 +612,11 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
   WriteProgramData(p, #PB_Program_Eof, 0)
 
   Protected output.CaptureT, errors.CaptureT
-  Protected killIssued.i = #False, n.i, available.i, drains.i, panicAt.i = TimeoutMs + 10000
+  Protected killIssued.i = #False, n.i, available.i, drains.i, killedAt.i
   Protected lastOutputMs.i = -1000
 
   While ProgramRunning(p)
+    PollControlMessages()
     ; 6.40 ReadProgramData waits for the requested SIZE, contrary to the
     ; reference's "up to size" wording. Read only the available snapshot.
     ; Bound work per poll so continuously flooding output cannot starve timeout.
@@ -634,9 +638,11 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
       lastOutputMs = ElapsedMilliseconds()
     Next
 
-    If killIssued = #False And ElapsedMilliseconds() - t0 >= TimeoutMs
-      *r\timedOut = #True
+    If killIssued = #False And (gRequestCancelled Or ElapsedMilliseconds() - t0 >= TimeoutMs)
+      *r\cancelled = gRequestCancelled
+      *r\timedOut = Bool(Not *r\cancelled)
       killIssued = #True
+      killedAt = ElapsedMilliseconds()
       CompilerIf #PB_Compiler_OS = #PB_OS_Windows
         JobTerminate(job, 1)
       CompilerElse
@@ -644,7 +650,7 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
       CompilerEndIf
       KillProgram(p)
     EndIf
-    If killIssued And ElapsedMilliseconds() - t0 > panicAt
+    If killIssued And ElapsedMilliseconds() - killedAt > 10000
       *r\exitCodeUnknown = #True   ; unkillable past the panic backstop
       Break
     EndIf
@@ -1142,24 +1148,6 @@ EndProcedure
 ; source reading (line count + hint lint)
 ; ---------------------------------------------------------------------------
 
-; Whole-file decode. Returns "" for missing/unreadable. The BOM character
-; (if any) is KEPT - the hint lints run against the same text as the line
-; count.
-Procedure.s ReadSourceWhole(File$)
-  Protected size.i = FileSize(File$)
-  If size < 0 : ProcedureReturn "" : EndIf
-  Protected f.i = ReadFile(#PB_Any, File$)
-  If f = 0 : ProcedureReturn "" : EndIf
-  Protected *buf = AllocateMemory(size + 1)
-  If *buf = 0 : CloseFile(f) : ProcedureReturn "" : EndIf
-  Protected bytes.i = ReadData(f, *buf, size)
-  CloseFile(f)
-  Protected s$ = ""
-  If bytes > 0 : s$ = PeekS(*buf, bytes, #PB_UTF8 | #PB_ByteLength) : EndIf
-  FreeMemory(*buf)
-  ProcedureReturn s$
-EndProcedure
-
 ; Count CR/LF/CRLF lines in chunks; retain UTF-8 text only within the lint limit.
 ; The extra chunk detects overflow without allocating from the file's size.
 Procedure.i ReadCheckSource(File$, *Source.String)
@@ -1230,7 +1218,7 @@ Procedure CompilerStepWithRetry(CompilerExe$, Flag$, SrcFile$, ExeOut$, WorkingD
   If ExeOut$ <> "" : params$ + " " + #SW_EXE$ + " " + ProcQ(ExeOut$) : EndIf
   params$ + " " + ProcQ(SrcFile$)
   RunProcessCapture(CompilerExe$, params$, WorkingDir$, timeoutMs, *r)
-  If *r\exitCode <> 0 And *r\exitCode <> -1 And *r\timedOut = #False And IsTransientCompileFailure(*r\stdout)
+  If Not gRequestCancelled And *r\exitCode <> 0 And *r\exitCode <> -1 And *r\timedOut = #False And IsTransientCompileFailure(*r\stdout)
     Delay(250)
     RunProcessCapture(CompilerExe$, params$, WorkingDir$, timeoutMs, *r)
   EndIf
@@ -1629,6 +1617,7 @@ Procedure ToolCheck(IdValue.i, Args.i)
     SendTextResult(IdValue, res\stagingError, #True)
     ProcedureReturn
   EndIf
+  If gRequestCancelled : ProcedureReturn : EndIf
 
   ; metrics: one compile event, resolved path, real error parsing -
   ; ONLY on the success path

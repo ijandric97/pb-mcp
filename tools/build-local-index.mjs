@@ -64,6 +64,20 @@ export function cachedIndexMatches(index, source, version) {
     && index.referenceText && !Array.isArray(index.referenceText) && typeof index.referenceText === 'object';
 }
 
+export function parserFingerprint(projectRoot = root) {
+  const hash = createHash('sha256');
+  for (const file of [
+    join(projectRoot, 'tools', 'build-local-index.mjs'),
+    join(projectRoot, 'tools', 'build-online-index.mjs'),
+    join(projectRoot, 'src', 'scan_main.pb'),
+    join(projectRoot, 'src', 'scan_support.pb'),
+    join(projectRoot, 'src', 'html_scan.pb'),
+  ]) {
+    hash.update(file).update('\0').update(readFileSync(file)).update('\0');
+  }
+  return hash.digest('hex');
+}
+
 function run(command, args, timeout = 120000) {
   const result = spawnSync(command, args, { encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 128 * 1024 * 1024 });
   if (result.error || result.status !== 0) throw new Error(`${command}: ${result.error?.message || result.stderr || result.stdout || `exit ${result.status}`}`);
@@ -99,13 +113,8 @@ export function buildLocalIndex(compiler, outFile) {
   if (detected.error || !version) throw new Error(`Cannot detect compiler version: ${detected.error?.message || detected.stderr || detected.stdout}`);
   const home = dirname(dirname(compiler));
   const help = findLocalHelp(home);
-  const inputs = createHash('sha256');
-  for (const file of [fileURLToPath(import.meta.url), join(root, 'tools', 'build-online-index.mjs'),
-    ...readdirSync(join(root, 'src')).filter(file => file.endsWith('.pb')).sort().map(file => join(root, 'src', file))]) {
-    inputs.update(readFileSync(file));
-  }
   const source = { kind: help.kind, path: help.path, sha256: helpHash(help), compiler, compilerVersion: version,
-    compilerSha256: createHash('sha256').update(readFileSync(compiler)).digest('hex'), parserSha256: inputs.digest('hex') };
+    compilerSha256: createHash('sha256').update(readFileSync(compiler)).digest('hex'), parserSha256: parserFingerprint() };
   let cached;
   try { cached = JSON.parse(readFileSync(outFile, 'utf8')); } catch { /* Missing or invalid indexes are rebuilt. */ }
   if (cachedIndexMatches(cached, source, version)) {
@@ -120,7 +129,7 @@ export function buildLocalIndex(compiler, outFile) {
     if (help.kind === 'local-chm') extractHelp(help.path, docs);
     checkHelpVersion(docs, version);
     const scanner = join(work, win ? 'pbmcp.exe' : 'pbmcp');
-    const main = join(root, 'src', 'main.pb');
+    const main = join(root, 'src', 'scan_main.pb');
     const args = win ? ['/THREAD', '/CONSOLE', main, '/EXE', scanner] : ['--thread', '--console', main, '--output', scanner];
     console.log(`local docs: compiler/help ${version}, indexing ${help.path}`);
     run(compiler, args);

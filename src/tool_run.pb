@@ -153,7 +153,7 @@ Procedure RunConsoleProgram(CompilerExe$, AbsFile$, ProjectRoot$, List ProgArgs$
   *res\compileDurationMs = *res\compileRes\durationMs
   ParseDiagnostics(*res\compileRes\stdout, *res\compileErrors(), *res\compileWarnings())
 
-  Protected compileFailed.i = Bool(*res\compileRes\spawnFailed Or *res\compileRes\timedOut Or *res\compileRes\exitCode <> 0 Or ListSize(*res\compileErrors()) > 0)
+  Protected compileFailed.i = Bool(*res\compileRes\spawnFailed Or *res\compileRes\timedOut Or *res\compileRes\cancelled Or *res\compileRes\exitCode <> 0 Or ListSize(*res\compileErrors()) > 0)
 
   If compileFailed = #False
     ; defense in depth: if the output switch was ignored but the compiler
@@ -178,7 +178,7 @@ Procedure RunConsoleProgram(CompilerExe$, AbsFile$, ProjectRoot$, List ProgArgs$
   CleanupTempDir(copydir)
 
   *res\durationMs = ElapsedMilliseconds() - t0
-  *res\ok = Bool(*res\hasRun And *res\runRes\exitCode = 0 And *res\runRes\timedOut = #False)
+  *res\ok = Bool(*res\hasRun And *res\runRes\exitCode = 0 And *res\runRes\timedOut = #False And *res\runRes\cancelled = #False)
 EndProcedure
 
 ; ---------------------------------------------------------------------------
@@ -259,6 +259,7 @@ Procedure ToolRun(IdValue.i, Args.i)
     SendTextResult(IdValue, res\stagingError, #True)
     ProcedureReturn
   EndIf
+  If gRequestCancelled : ProcedureReturn : EndIf
 
   ; metrics: compile-scoped - runtime exit codes are
   ; behavior, not compile fixes; duration is the TOTAL wall time

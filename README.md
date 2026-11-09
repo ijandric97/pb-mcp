@@ -64,7 +64,8 @@ extraction failures, or incomplete command coverage fail the build.
 The first build compiles a temporary scanner, extracts/parses the local help,
 then embeds the resulting `src/pbdocs-index.json` in the final executable.
 No existing server binary or network access is required. Subsequent builds
-reuse that index when the compiler, help content, and parser inputs are unchanged.
+reuse that index when the compiler, help content, scanner, and index builders are unchanged.
+Edits to compiler execution, metrics, or MCP request handling keep the docs cache warm.
 The previous index remains intact if generation fails. Changing installations
 or updating the help automatically invalidates the cache.
 
@@ -219,8 +220,16 @@ arguments containing double quotes, NUL, or newlines. Supported arguments are
 passed as separate program parameters. Its executable and compiler artifacts stay in temporary
 storage, while relative includes and runtime data paths use the original source.
 Remaining processes in each run's Windows job or Linux process group are
-terminated after normal exit, timeout, or server termination.
+terminated after normal exit, timeout, cancellation, or server termination.
 Compiler and program stdin is a separate closed pipe (EOF).
+
+Compiler tools process one call at a time while continuing to receive control
+messages. Pings can be answered before an earlier tool call finishes. Send an
+MCP `notifications/cancelled` notification with the active call's `requestId` to
+stop its compiler or program and descendants; the cancelled call sends no result.
+Unknown, completed, or malformed cancellation notifications are ignored.
+Other tool calls remain queued in arrival order. Deferred input is bounded, so
+large pipelines apply backpressure to the input pipe.
 
 Both compiler tools show warnings without treating them as errors. Warning
 sections are bounded to 40 entries and 4,000 characters. `pb_check` counts source
@@ -412,7 +421,8 @@ cache invalidation, warm reuse, bootstrap scanning, and failure preservation.
 The suite does not download the live documentation.
 
 Highlights: 7-byte dribble stress cutting UTF-8 chars across stdin chunk
-boundaries, byte-exact error paths, pb_run timeout/orphan/cleanup gates,
+boundaries, byte-exact response lines matched independently of reply order,
+pb_run timeout/orphan/cleanup gates, compiler and program cancellation,
 descendant cleanup after normal exit and server termination, partial-line compiler
 version timeouts, PATH-only version reports, and missing-index UX paths.
 Set `PUREBASIC_HOME` to the installation to test.
@@ -420,8 +430,10 @@ Set `PUREBASIC_HOME` to the installation to test.
 ## Layout
 
     src/main.pb        entry, arg parse (serve | http | scan | scan-batch | test | version)
-    src/console.pb     WriteLine (UTF-8, LF-framed), RunFile, byte-level RunStdin
-    src/jsonrpc.pb     request parse, response/error builders, transport sink, id copy
+    src/console.pb     byte-level stdin framing, control polling, and queued input
+    src/scan_support.pb shared UTF-8 output, JSON string helpers, and file reads
+    src/scan_main.pb   small scanner-only executable used by the local index build
+    src/jsonrpc.pb     request parse, response/error builders, id copy
     src/config.pb      PB home discovery, /VERSION detect, capability flags, cache dir
     src/metrics.pb     JSONL metrics (frozen record shape), error-bucket classifier
     src/docs_index.pb  docs index cache + search + lookup + did-you-mean

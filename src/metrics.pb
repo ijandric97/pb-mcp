@@ -151,8 +151,7 @@ EndProcedure
 ; not preserve member insertion order; consumers read the frozen field order
 ; ts,source,tool,file,ok,errorCount,buckets,durationMs exactly.
 
-; Escaping (JsonEscape/JsonQ) lives in jsonrpc.pb - hoisted there
-; so the tools/list builders can reuse it too.
+; JsonEscape/JsonQ are shared with the scanner in scan_support.pb.
 Procedure MetricsEnabled()
   ProcedureReturn Bool(GetEnvironmentVariable("PUREBASIC_MCP_NO_METRICS") <> "1")
 EndProcedure

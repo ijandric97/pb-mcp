@@ -201,7 +201,17 @@ console.log("\n[1] framing + multibyte (100-line session)");
   writeFileSync(fixturePath, fixtureLines.join("\n") + "\n", "utf8");
   console.log(`     fixture: ${fixturePath} (100 lines, ${responses.length} expected responses)`);
 
-  // file mode vs stdin-piped must be byte-identical
+  // Pings can overtake compiler work; compare byte-exact lines independent of order.
+  const wireLines = bytes => {
+    const lines = [];
+    let start = 0, end;
+    while ((end = bytes.indexOf(10, start)) !== -1) {
+      lines.push(bytes.subarray(start, end + 1).toString('hex'));
+      start = end + 1;
+    }
+    if (start < bytes.length) lines.push(bytes.subarray(start).toString('hex'));
+    return lines.sort();
+  };
   const fileMode = spawnSync(exe, ["test", fixturePath], { env: pinEnv(), encoding: "buffer", cwd: root, timeout: 30000, windowsHide: true });
   const pipeMode = spawnSync(exe, [], { input: readFileSync(fixturePath), env: pinEnv(), encoding: "buffer", cwd: root, timeout: 30000, windowsHide: true });
   if (fileMode.error || pipeMode.error) throw new Error(`MCP framing session failed: ${fileMode.error || pipeMode.error}`);
@@ -209,8 +219,8 @@ console.log("\n[1] framing + multibyte (100-line session)");
   check("pipe mode exits 0", pipeMode.status === 0, `status=${pipeMode.status} stderr=${pipeMode.stderr}`);
   writeFileSync(join(outDir, "file_mode.txt"), fileMode.stdout);
   writeFileSync(join(outDir, "pipe_mode.txt"), pipeMode.stdout);
-  check("pipe output byte-identical to file mode",
-    Buffer.compare(fileMode.stdout, pipeMode.stdout) === 0,
+  check("pipe response lines byte-identical to file mode",
+    deepEqual(wireLines(fileMode.stdout), wireLines(pipeMode.stdout)),
     `file=${fileMode.stdout.length}B pipe=${pipeMode.stdout.length}B`);
 
   const outLines = pipeMode.stdout.toString("utf8").split("\n").filter((l) => l.trim() !== "");
@@ -218,12 +228,12 @@ console.log("\n[1] framing + multibyte (100-line session)");
     `got ${outLines.length}, want ${responses.length}`);
   let allJson = true, idsOk = true, initOk = false, listOk = false;
   const parsed = outLines.map((l) => { try { return JSON.parse(l); } catch { allJson = false; return null; } });
-  parsed.forEach((obj, i) => { if (obj && obj.id !== responses[i]) idsOk = false; });
+  idsOk = deepEqual(parsed.map(obj => JSON.stringify(obj?.id)).sort(), responses.map(id => JSON.stringify(id)).sort());
   const initResp = parsed[0], listResp = parsed[1];
   if (initResp) initOk = !!initResp.result?.protocolVersion && !!initResp.result?.serverInfo?.name;
   if (listResp) listOk = Array.isArray(listResp.result?.tools) && listResp.result.tools.length === 5;
   check("every output line parses as JSON", allJson);
-  check("response id sequence intact", idsOk);
+  check("response ids intact", idsOk);
   check("initialize result well-formed", initOk);
   check("tools/list returns the 5 registered tools", listOk);
   const unknownCallResp = parsed.find((o) => o?.error?.code === -32602);
@@ -235,8 +245,8 @@ console.log("\n[1] framing + multibyte (100-line session)");
   console.log("     [dribble]");
   const streamed = await dribble(exe, [], readFileSync(fixturePath), { env: pinEnv(), cwd: root });
   check("dribble exits cleanly", streamed.status === 0 && !streamed.error, streamed.error || streamed.stderr);
-  check("dribble output byte-identical to big-write pipe mode",
-    Buffer.compare(streamed.stdout, pipeMode.stdout) === 0,
+  check("dribble response lines byte-identical to big-write pipe mode",
+    deepEqual(wireLines(streamed.stdout), wireLines(pipeMode.stdout)),
     `dribble=${streamed.stdout.length}B pipe=${pipeMode.stdout.length}B`);
 }
 
@@ -887,7 +897,7 @@ try {
 }
 
 console.log("\n[12] compiler workflow, stdio lifecycle, and crawler regressions");
-for (const test of ["protocol.mjs", "compiler.mjs", "processes.mjs", "metrics.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs", "build.mjs", "packaging.mjs"]) {
+for (const test of ["protocol.mjs", "compiler.mjs", "processes.mjs", "cancellation.mjs", "metrics.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs", "build.mjs", "packaging.mjs"]) {
   try {
     console.log(execFileSync(process.execPath, [join(testDir, test)], {
       cwd: root, env: { ...pinEnv(), PBMCP_EXE: exe }, encoding: "utf8", timeout: 60000, windowsHide: true,

@@ -69,6 +69,8 @@ Procedure.s ConfigDetectVersion(compilerPath$)
   Protected *buffer = AllocateMemory(65536), kept.i, available.i, n.i
   If *buffer
     Repeat
+      PollControlMessages()
+      If gRequestCancelled : Break : EndIf
       available = AvailableProgramOutput(p)
       If available > 0
         If available > 65536 - kept : available = 65536 - kept : EndIf
@@ -103,7 +105,7 @@ EndProcedure
 
 ; --- accessors (each implies ConfigInit) -----------------------------------
 Procedure ConfigInit()
-  If gConfigReady : ProcedureReturn : EndIf
+  If gConfigReady Or gRequestCancelled : ProcedureReturn : EndIf
   gConfigReady = #True   ; set first: no re-entrancy on failure paths
 
   CompilerSelect #PB_Compiler_OS
@@ -171,6 +173,10 @@ Procedure ConfigInit()
   CompilerEndSelect
 
   gPbVersion$ = ConfigDetectVersion(gCompilerPath$)
+  If gRequestCancelled
+    gConfigReady = #False
+    ProcedureReturn
+  EndIf
 
   ; Older and unknown compilers keep the banner filter; 6.x success is silent.
   Protected major.i = Val(StringField(gPbVersion$, 1, "."))

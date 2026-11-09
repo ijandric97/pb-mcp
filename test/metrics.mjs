@@ -48,6 +48,8 @@ try {
 Procedure ToolList(IdValue.i) : EndProcedure
 Procedure ToolDispatch(IdValue.i, Params.i) : EndProcedure
 If OpenConsole() = 0 : End 1 : EndIf
+NewList messages$()
+NewList buckets$()
 If ProgramParameter(0) = "hold"
   CompilerIf #PB_Compiler_OS = #PB_OS_Windows
     Define f.i = OpenFile(#PB_Any, MetricsPath(), #PB_File_Append)
@@ -65,8 +67,63 @@ If ProgramParameter(0) = "hold"
   CompilerElse
     MetricsClose(fd)
   CompilerEndIf
+ElseIf ProgramParameter(0) = "classify"
+  If MetricsClassifyError("With EnableExplicit, variables have to be declared") <> "declaration" : End 10 : EndIf
+  If MetricsClassifyError("x is not declared") <> "declaration" : End 11 : EndIf
+  If MetricsClassifyError("x must be declared") <> "declaration" : End 12 : EndIf
+  If MetricsClassifyError("Foo is not a function") <> "unknown-command" : End 13 : EndIf
+  If MetricsClassifyError("unknown command Foo") <> "unknown-command" : End 14 : EndIf
+  If MetricsClassifyError("unknown function Foo") <> "unknown-command" : End 15 : EndIf
+  If MetricsClassifyError("too many parameters") <> "wrong-signature" : End 16 : EndIf
+  If MetricsClassifyError("not enough parameter") <> "wrong-signature" : End 17 : EndIf
+  If MetricsClassifyError("wrong number of parameters") <> "wrong-signature" : End 18 : EndIf
+  If MetricsClassifyError("incorrect number of parameters") <> "wrong-signature" : End 19 : EndIf
+  If MetricsClassifyError("type mismatch") <> "type-mismatch" : End 20 : EndIf
+  If MetricsClassifyError("value does not match the expected type") <> "type-mismatch" : End 21 : EndIf
+  If MetricsClassifyError("string cannot be used as a number") <> "type-mismatch" : End 22 : EndIf
+  If MetricsClassifyError("bad parameter type") <> "type-mismatch" : End 23 : EndIf
+  If MetricsClassifyError("closing bracket is missing") <> "syntax" : End 24 : EndIf
+  If MetricsClassifyError("syntax error") <> "syntax" : End 25 : EndIf
+  If MetricsClassifyError("syntax is: x") <> "syntax" : End 26 : EndIf
+  If MetricsClassifyError("only supported with keywords") <> "syntax" : End 27 : EndIf
+  If MetricsClassifyError("can't have a type") <> "syntax" : End 28 : EndIf
+  If MetricsClassifyError("illegal command") <> "syntax" : End 29 : EndIf
+  If MetricsClassifyError("without a matching EndIf") <> "syntax" : End 30 : EndIf
+  If MetricsClassifyError("unclosed string") <> "syntax" : End 31 : EndIf
+  If MetricsClassifyError("unrecognized diagnostic") <> "other" : End 32 : EndIf
+  If MetricsClassifyError("SYNTAX ERROR") <> "syntax" : End 33 : EndIf
+
+  ; Earlier rules win, and category output is distinct and in frozen order.
+  AddElement(messages$()) : messages$() = "unrecognized diagnostic"
+  AddElement(messages$()) : messages$() = "unclosed string"
+  AddElement(messages$()) : messages$() = "unclosed string"
+  AddElement(messages$()) : messages$() = "illegal command"
+  AddElement(messages$()) : messages$() = "bad parameter type"
+  AddElement(messages$()) : messages$() = "incorrect number of parameters"
+  AddElement(messages$()) : messages$() = "unknown command Foo"
+  AddElement(messages$()) : messages$() = "syntax error"
+  AddElement(messages$()) : messages$() = "x is not declared and syntax error"
+  MetricsClassifyBuckets(messages$(), buckets$())
+  If ListSize(buckets$()) <> 6 : End 34 : EndIf
+  ResetList(buckets$())
+  If Not NextElement(buckets$()) : End 35 : EndIf
+  If buckets$() <> "declaration" : End 36 : EndIf
+  If Not NextElement(buckets$()) : End 37 : EndIf
+  If buckets$() <> "unknown-command" : End 38 : EndIf
+  If Not NextElement(buckets$()) : End 39 : EndIf
+  If buckets$() <> "wrong-signature" : End 40 : EndIf
+  If Not NextElement(buckets$()) : End 41 : EndIf
+  If buckets$() <> "type-mismatch" : End 42 : EndIf
+  If Not NextElement(buckets$()) : End 43 : EndIf
+  If buckets$() <> "syntax" : End 44 : EndIf
+  If Not NextElement(buckets$()) : End 45 : EndIf
+  If buckets$() <> "other" : End 46 : EndIf
+  If NextElement(buckets$()) : End 47 : EndIf
+  ClearList(messages$())
+  MetricsClassifyBuckets(messages$(), buckets$())
+  If ListSize(buckets$()) <> 0 : End 48 : EndIf
+  PrintN("classified")
 Else
-  NewList buckets$()
   AddElement(buckets$()) : buckets$() = "syntax"
   Define i.i
   For i = 1 To Val(ProgramParameter(1))
@@ -108,6 +165,10 @@ CloseConsole()
     assert.equal(text.trim(), 'locked');
     return worker;
   }
+  const classified = await launch(['classify', '0'], join(scratch, 'classifier.jsonl')).done;
+  clean(classified);
+  assert.equal(classified.stdout.trim(), 'classified', JSON.stringify(classified));
+
   const metrics = join(scratch, 'shared.jsonl');
   writeFileSync(metrics, '{"old":true}\n');
   const writers = Array.from({ length: 4 }, (_, i) => launch(['writer' + i, '1000'], metrics));

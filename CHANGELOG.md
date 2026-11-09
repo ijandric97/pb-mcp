@@ -4,6 +4,11 @@
 
 ### Added
 
+- Cancellation of active compiler/program calls, including descendant cleanup
+  and suppression of the cancelled result. Pings remain responsive during
+  execution; ordinary tool calls stay queued in arrival order.
+- Local cancellation regressions and direct tests for all error-classifier rules,
+  category precedence, deduplication, and ordering.
 - Compiler regressions for warnings on success/failure, warning limits and
   metrics, streamed source boundaries, and escaped strings in best-practice lint.
 - Windows build regressions exercise the real `build.cmd` with a controlled
@@ -47,6 +52,9 @@
 
 ### Changed
 
+- Index builds use a small scanner executable and shared helpers. Only scanner
+  and index-builder changes invalidate the parser cache; unrelated server edits
+  reuse it. Compiler/help fingerprints and scan output checks remain in place.
 - Documentation loads lazily by default. `PBMCP_PRELOAD=1` now loads the index
   synchronously before serving requests instead of using a background thread.
 - The Windows encoding gate uses the already-required Node.js runtime instead
