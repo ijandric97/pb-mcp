@@ -18,8 +18,8 @@ dependencies (no Node, no npx).
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `pb_docs_search` | Search the PureBasic command reference. Returns command names, library, and one-line summaries. Optional `library` filter, `limit` (1–25, default 10).                                                              |
 | `pb_command`     | Full command documentation: syntax, parameters, return value, remarks, example, OS, and related commands. Reference-page titles and aliases return bounded local text with the official source URL. Older indexes retain a URL fallback until rebuilt. |
-| `pb_check`       | Syntax-check a `.pb` file with the **real compiler** (~350 ms). Returns structured errors with line numbers, high-confidence hints on common beginner errors, and always-on best-practice notes (missing `EnableExplicit`, `Global` inside procedures, `Goto`/`Gosub`). The file's project tree is staged to a bounded temporary workspace (see [Project staging](#project-staging)); originals are never modified.                                                                                                     |
-| `pb_run`         | Compile and run a console program, capturing stdout. Accepts `args[]` and `timeoutMs` (default 15000, max 60000). Console programs only; the program runs inside the staged copy with the entry file's directory as its working directory, so relative resources and executable-relative DLLs come from the copied project. Generated files are ephemeral and removed with the workspace. |
+| `pb_check`       | Syntax-check a `.pb` file with the **real compiler**  . Reports total processing time, compiler warnings, and structured errors with line numbers, high-confidence hints on common beginner errors, and always-on best-practice notes (missing `EnableExplicit`, `Global` inside procedures, `Goto`/`Gosub`). The file's project tree is staged to a bounded temporary workspace (see [Project staging](#project-staging)); originals are never modified.                                                                                                     |
+| `pb_run`         | Compile and run a console program, reporting compiler warnings and capturing stdout. Accepts `args[]` and `timeoutMs` (default 15000, max 60000). Console programs only; the program runs inside the staged copy with the entry file's directory as its working directory, so relative resources and executable-relative DLLs come from the copied project. Generated files are ephemeral and removed with the workspace. |
 | `pb_version`     | Report the server version, MCP protocol version, detected PureBasic compiler version + install path, and the docs-index version + build date + entry counts. Takes no arguments.                                     |
 
 The docs tools answer from a docs index built by the repo's Node tooling
@@ -168,6 +168,14 @@ interpretation; the root only selects what gets staged:
   docs index in a background thread at startup. The Windows non-thread-safe
   build has a known preload race; deployment guidance sets `PBMCP_PRELOAD=0`.
 
+## Local verification
+
+Run `./build.cmd test` from Git Bash on Windows or `bash build.sh test` on
+Linux before committing changes. Each command builds with the installed
+compiler and matching help, then runs the full acceptance suite against that
+binary. Platform-specific branches need a native test run on each supported OS.
+The distribution scripts also run this suite before replacing the local bundle.
+
 ## Distribution
 
     make-dist.cmd    (Windows)  /  make-dist.sh    (Linux)
@@ -213,6 +221,11 @@ storage, while relative includes and runtime data paths use the original source.
 Remaining processes in each run's Windows job or Linux process group are
 terminated after normal exit, timeout, or server termination.
 Compiler and program stdin is a separate closed pipe (EOF).
+
+Both compiler tools show warnings without treating them as errors. Warning
+sections are bounded to 40 entries and 4,000 characters. `pb_check` counts source
+lines in fixed-size chunks and retains text for hints and best-practice notes
+only for files up to 512 KiB; larger files still receive compiler diagnostics.
 
 ## Client configuration
 

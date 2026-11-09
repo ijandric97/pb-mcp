@@ -4,6 +4,8 @@
 
 ### Added
 
+- Compiler regressions for warnings on success/failure, warning limits and
+  metrics, streamed source boundaries, and escaped strings in best-practice lint.
 - Windows build regressions exercise the real `build.cmd` with a controlled
   compiler, including output paths, test targeting, and failed build stages.
 - Multiprocess metrics regressions check complete records, bounded lock waits,
@@ -67,6 +69,13 @@
   Windows checkouts used through WSL.
 
 ### Fixed
+
+- Both compiler tools retain and display bounded warning sections without
+  changing compile success or counting warnings as errors in metrics.
+- Source line counting streams fixed-size chunks and retains at most 512 KiB
+  for lint, avoiding whole-file allocations for large sources.
+- Best-practice lint recognizes escaped quotes and backslashes in PureBasic
+  escaped strings, preserving procedure scope for subsequent declarations.
 
 - Removed concurrent documentation loading, which could cause intermittent
   Windows access violations when short MCP sessions exited. Regressions cover

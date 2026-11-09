@@ -35,6 +35,7 @@ Structure RunResultT
   compileRes.RunResT    ; compiler spawn result (stdout holds diagnostics)
   runRes.RunResT        ; program spawn result (valid when hasRun)
   List compileErrors.DiagT()
+  List compileWarnings.DiagT()
 EndStructure
 
 ; FormatRunResult: exit X · N s / TIMEOUT / COMPILE FAILED.
@@ -50,6 +51,7 @@ Procedure.s FormatRunResult(*res.RunResultT, File$)
       If *res\compileErrors()\file <> "" : out$ + " (in " + *res\compileErrors()\file + ")" : EndIf
       shown + 1
     Next
+    out$ + FormatWarnings(*res\compileWarnings())
     If *res\noExecutable
       out$ + Chr(10) + "(compiler reported success but produced no executable)"
     ElseIf *res\compileRes\spawnFailed
@@ -80,6 +82,7 @@ Procedure.s FormatRunResult(*res.RunResultT, File$)
     Protected secs.d = *res\runRes\durationMs / 1000.0
     out$ = "exit " + code$ + " · " + StrD(secs, 1) + " s (" + File$ + ")"
   EndIf
+  out$ + FormatWarnings(*res\compileWarnings())
   out$ + Chr(10) + "--- stdout ---"
   If TrimAll(*res\runRes\stdout) = ""
     out$ + Chr(10) + "(empty)"
@@ -108,6 +111,7 @@ EndProcedure
 ; runConsoleProgram port.
 Procedure RunConsoleProgram(CompilerExe$, AbsFile$, ProjectRoot$, List ProgArgs$(), TimeoutMs.i, *res.RunResultT)
   ClearList(*res\compileErrors())
+  ClearList(*res\compileWarnings())
   *res\ok = #False
   *res\compileDurationMs = 0
   *res\noExecutable = #False
@@ -147,8 +151,7 @@ Procedure RunConsoleProgram(CompilerExe$, AbsFile$, ProjectRoot$, List ProgArgs$
     CompilerStepWithRetry(CompilerExe$, #SW_CONSOLE$, copy\file, exe$, @*res\compileRes)
   EndIf
   *res\compileDurationMs = *res\compileRes\durationMs
-  NewList ignoredWarnings.DiagT()
-  ParseDiagnostics(*res\compileRes\stdout, *res\compileErrors(), ignoredWarnings())
+  ParseDiagnostics(*res\compileRes\stdout, *res\compileErrors(), *res\compileWarnings())
 
   Protected compileFailed.i = Bool(*res\compileRes\spawnFailed Or *res\compileRes\timedOut Or *res\compileRes\exitCode <> 0 Or ListSize(*res\compileErrors()) > 0)
 

@@ -76,6 +76,38 @@ for (const tool of ['pb_check', 'pb_run']) {
 }
 
 const hello = join(root, 'test', 'fixtures', 'hello.pb');
+const warningSource = join(scratch, 'warnings.pb');
+const warningMetrics = join(scratch, 'warning-metrics.jsonl');
+const warningProgram = 'EnableExplicit\nCompilerWarning "first warning"\nCompilerWarning "second warning"\n' +
+  'If OpenConsole()\n  PrintN("warning program ran")\n  CloseConsole()\nEndIf\n';
+writeFileSync(warningSource, warningProgram);
+for (const tool of ['pb_check', 'pb_run']) {
+  const output = ok(invoke(tool, { file: warningSource }, {
+    PUREBASIC_MCP_NO_METRICS: '0', PUREBASIC_MCP_METRICS: warningMetrics }));
+  assert.match(output, /Warnings \(2\):\r?\nLine 2: first warning\r?\nLine 3: second warning/);
+  if (tool === 'pb_run') assert.ok(output.includes('warning program ran'), output);
+}
+for (const record of readFileSync(warningMetrics, 'utf8').trim().split('\n').map(line => JSON.parse(line))) {
+  assert.equal(record.ok, true);
+  assert.equal(record.errorCount, 0, 'warnings counted as compiler errors');
+  assert.deepEqual(record.buckets, []);
+}
+writeFileSync(warningSource, warningProgram + 'CompilerError "fatal after warnings"\n');
+for (const tool of ['pb_check', 'pb_run']) {
+  const failed = invoke(tool, { file: warningSource });
+  assert.equal(failed.result.isError, true, text(failed));
+  assert.match(text(failed), /fatal after warnings/);
+  assert.match(text(failed), /Warnings \(2\):/);
+}
+writeFileSync(warningSource, 'EnableExplicit\n' +
+  Array.from({ length: 45 }, (_, i) => 'CompilerWarning "warning ' + i + '"').join('\n'));
+for (const tool of ['pb_check', 'pb_run']) {
+  const output = ok(invoke(tool, { file: warningSource }));
+  assert.match(output, /Warnings \(45\):/);
+  assert.match(output, /warning 39/);
+  assert.ok(!output.includes('warning 40'), output);
+  assert.match(output, /… \+5 more warnings/);
+}
 const args = ['alpha', 'beta gamma', '', 'tail\\', 'tab\tvalue', String.raw`\u0000`, String.raw`\\u0000`];
 const echoed = ok(invoke('pb_run', { file: hello, args }));
 assert.deepEqual(echoed.split(/\r?\n/).filter(line => /^arg\d+=/.test(line)).map(line => line.slice(line.indexOf('=') + 1)), args);
@@ -105,6 +137,16 @@ for (const [name, source] of [['lf', bp], ['crlf', bp.replace(/\n/g, '\r\n')], [
 const clean = join(scratch, 'clean.pb');
 writeFileSync(clean, '\uFEFFEnableExplicit\nDefine text.s = "Global; Goto EndProcedure"\n; Global Goto\n');
 assert.ok(!ok(invoke('pb_check', { file: clean })).includes('Best practices'), 'strings, comments, or BOM confused the lint');
+const escaped = join(scratch, 'escaped-strings.pb');
+writeFileSync(escaped, '\uFEFF' + [
+  'EnableExplicit', 'Procedure Sample()',
+  '  Define quote.s = ~"a \\" EndProcedure b"',
+  '  Define slash.s = ~"tail\\\\"',
+  '  Define path.s = "tail\\"',
+  '  Global value.i', 'EndProcedure',
+].join('\n'));
+const escapedResult = ok(invoke('pb_check', { file: escaped }));
+assert.match(escapedResult, /Best practices \(1\):\r?\nLine 6: `Global` inside a procedure/);
 
 const large = join(scratch, 'large.pb');
 writeFileSync(large, 'EnableExplicit\n' + '; padding\n'.repeat(50000));
@@ -120,6 +162,28 @@ assert.ok(measured.ms < 2000, `large-file check regressed: ${measured.ms}ms`);
 const longLine = join(scratch, 'long-line.pb');
 writeFileSync(longLine, ' '.repeat(200000) + 'EnableExplicit\n');
 assert.ok(!ok(invoke('pb_check', { file: longLine })).includes('Best practices'));
+const streamed = join(scratch, 'streamed.pb');
+writeFileSync(streamed, 'EnableExplicit\n' + '; padding\r\n'.repeat(100000));
+assert.match(ok(invoke('pb_check', { file: streamed })), /^OK — 100001 lines,/);
+
+const sourceCases = [
+  ['empty', '', 0],
+  ['unterminated', 'last', 1],
+  ['mixed', 'one\rtwo\r\nthree\n\nlast', 5],
+  ['crlf-boundary', ' '.repeat(65535) + '\r\n', 1],
+  ['utf8-boundary', '\uFEFF' + ' '.repeat(65532) + '🚀\r\nlast', 2],
+  ['lint-limit', ' '.repeat(512 * 1024 - 2) + '\r\n', 1],
+  ['over-limit', ' '.repeat(512 * 1024 - 1) + '\r\n', 1],
+  ['many-chunks', (' '.repeat(65535) + '\r\n').repeat(20) + 'last', 21],
+];
+const sourceChecks = sourceCases.map(([name, content, lines]) => {
+  const file = join(scratch, 'source-' + name + '.txt');
+  writeFileSync(file, content);
+  return 'If ReadCheckSource("' + file + '", @sourceText) <> ' + lines + ' : End 20 : EndIf\n' +
+    (Buffer.byteLength(content) <= 512 * 1024
+      ? 'If sourceText\\s <> ReadSourceWhole("' + file + '") : End 21 : EndIf'
+      : 'If sourceText\\s <> "" : End 22 : EndIf');
+});
 
 // Inspect the capture before tool formatting applies its smaller response cap.
 const win = process.platform === 'win32';
@@ -227,6 +291,10 @@ If FindString(FormatRunResult(@failed, "fixture.pb"), "Compiler timeout after 30
 failed\\hasRun = #True
 failed\\runRes\\spawnFailed = #True
 If FindString(FormatRunResult(@failed, "fixture.pb"), "PROGRAM FAILED TO START") <> 1 : End 10 : EndIf
+Define sourceText.String
+${sourceChecks.join('\n')}
+sourceText\\s = "stale"
+If ReadCheckSource("${scratch}/missing-source.pb", @sourceText) <> -1 Or sourceText\\s <> "" : End 23 : EndIf
 Define diagnosticText.s = LSet("", 1024 * 1024, Chr(10)), parseStarted.i = ElapsedMilliseconds()
 NewList parsedErrors.DiagT()
 NewList parsedWarnings.DiagT()
@@ -254,4 +322,4 @@ const captured = spawnSync(captureExe, [], { env, encoding: 'utf8', timeout: 150
 assert.equal(captured.status, 0, `capture probe exit ${captured.status}: ${captured.stdout}${captured.stderr}`);
 assert.match(captured.stdout, /stderr capture bounded/);
 console.log(captured.stdout.trim());
-console.log(`compiler tests passed (includes/resources/diagnostics, compiler failures, metrics paths, args, lint, stderr caps/UTF-8/deadlines); 50,000 lines: ${Math.round(measured.ms)}ms wall, ${reported}ms reported`);
+console.log(`compiler tests passed (includes/resources/diagnostics, warnings, bounded source reads, escaped-string lint, compiler failures, metrics paths, args, stderr caps/UTF-8/deadlines); 50,000 lines: ${Math.round(measured.ms)}ms wall, ${reported}ms reported`);

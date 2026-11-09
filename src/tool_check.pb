@@ -45,6 +45,7 @@ EnableExplicit
 #MAX_RUN_TIMEOUT_MS = 60000
 #MAX_CAPTURE_CHARS = 4194304   ; 4 MB byte capture guard per stream
 #CAPTURE_SPIN_MS = 5           ; poll flat out briefly after output arrives
+#MAX_LINT_SOURCE_BYTES = 512 * 1024
 
 ; JS String.trim(): PB Trim/LTrim/RTrim accept one character, not a set.
 Procedure.s TrimAll(Text$)
@@ -287,6 +288,21 @@ Procedure ParseDiagnostics(Output$, List Errors.DiagT(), List Warnings.DiagT())
       Warnings()\message = gReG1
     EndIf
   Wend
+EndProcedure
+
+Procedure.s FormatWarnings(List Warnings.DiagT())
+  If ListSize(Warnings()) = 0 : ProcedureReturn "" : EndIf
+  Protected out$ = Chr(10) + "Warnings (" + Str(ListSize(Warnings())) + "):", shown.i
+  ForEach Warnings()
+    If shown >= 40 : Break : EndIf
+    out$ + Chr(10) + "Line " + Str(Warnings()\line) + ": " + Warnings()\message
+    If Warnings()\file <> "" : out$ + " (in " + Warnings()\file + ")" : EndIf
+    shown + 1
+  Next
+  If ListSize(Warnings()) > shown
+    out$ + Chr(10) + "… +" + Str(ListSize(Warnings()) - shown) + " more warnings"
+  EndIf
+  ProcedureReturn CapText(out$, 4000)
 EndProcedure
 
 ; ---------------------------------------------------------------------------
@@ -1144,15 +1160,38 @@ Procedure.s ReadSourceWhole(File$)
   ProcedureReturn s$
 EndProcedure
 
-; sourceLines: \n, \r\n, \r aware; a single trailing terminator is not an
-; extra line; empty file = 0.
-Procedure.i SourceLines(Text$)
-  If Text$ = "" : ProcedureReturn 0 : EndIf
-  Protected norm$ = ReplaceString(Text$, Chr(13) + Chr(10), Chr(10))
-  norm$ = ReplaceString(norm$, Chr(13), Chr(10))
-  Protected n.i = CountString(norm$, Chr(10)) + 1
-  If Right(norm$, 1) = Chr(10) : n - 1 : EndIf
-  ProcedureReturn n
+; Count CR/LF/CRLF lines in chunks; retain UTF-8 text only within the lint limit.
+; The extra chunk detects overflow without allocating from the file's size.
+Procedure.i ReadCheckSource(File$, *Source.String)
+  *Source\s = ""
+  Protected f.i = ReadFile(#PB_Any, File$)
+  If f = 0 : ProcedureReturn -1 : EndIf
+  Protected *buffer = AllocateMemory(#MAX_LINT_SOURCE_BYTES + 65536)
+  If *buffer = 0 : CloseFile(f) : ProcedureReturn -1 : EndIf
+  Protected expected.i = Lof(f), total.i, kept.i, bytes.i, i.i, c.a, last.a, lines.i
+  Repeat
+    bytes = ReadData(f, *buffer + kept, 65536)
+    For i = 0 To bytes - 1
+      c = PeekA(*buffer + kept + i)
+      If c = 13 Or (c = 10 And last <> 13) : lines + 1 : EndIf
+      last = c
+    Next
+    total + bytes
+    If total <= #MAX_LINT_SOURCE_BYTES : kept = total : Else : kept = 0 : EndIf
+  Until bytes = 0
+  CloseFile(f)
+  If total <> expected
+    FreeMemory(*buffer)
+    ProcedureReturn -1
+  EndIf
+  If total > 0
+    If last <> 10 And last <> 13 : lines + 1 : EndIf
+    If total <= #MAX_LINT_SOURCE_BYTES
+      *Source\s = PeekS(*buffer, total, #PB_UTF8 | #PB_ByteLength)
+    EndIf
+  EndIf
+  FreeMemory(*buffer)
+  ProcedureReturn lines
 EndProcedure
 
 ; sourceLineAtNorm: 1-based line over an ALREADY CRLF-normalized text (lone
@@ -1322,19 +1361,23 @@ EndProcedure
 ; EnableExplicit. Rules the compiler already rejects (Protected/Static at
 ; file scope, '$' procedure names) are HINTS in BuildHints above, not here.
 
-; Strip string literals ("...", "" escape) then cut at the ; comment start.
+; Strip normal and escaped string literals, then cut at the ; comment start.
 ; Per-line by design: PB has no multiline strings, so a stray quote can only
 ; degrade that one line, never leak across lines.
 Procedure.s BpStripLine(Line$)
-  Protected i.i = 1, n.i = Len(Line$), c.i, written.i = 0
+  Protected i.i = 1, n.i = Len(Line$), c.i, written.i = 0, escaped.i
   Protected out$ = Space(n)
   While i <= n
     c = PeekU(@Line$ + (i - 1) * SizeOf(Character))
     If c = 34
+      escaped = #False
+      If i > 1 : escaped = Bool(PeekU(@Line$ + (i - 2) * SizeOf(Character)) = 126) : EndIf
       i + 1
       While i <= n
         c = PeekU(@Line$ + (i - 1) * SizeOf(Character))
-        If c = 34
+        If escaped And c = 92
+          i + 2
+        ElseIf c = 34
           If i < n And PeekU(@Line$ + i * SizeOf(Character)) = 34
             i + 2
           Else
@@ -1424,7 +1467,7 @@ EndProcedure
 
 ; Line-less errors (POLINK etc.) print as "Line 0: msg" verbatim - the
 ; golden sessions pin those bytes, so no beautification here.
-Procedure.s FormatCheckResult(StartMs.i, LineCount.i, Ok.i, TimedOut.i, List Errors.DiagT(), RawTail$, File$, SourceText$, List Buckets$())
+Procedure.s FormatCheckResult(StartMs.i, LineCount.i, Ok.i, TimedOut.i, List Errors.DiagT(), List Warnings.DiagT(), RawTail$, File$, SourceText$, List Buckets$())
   Protected out$ = ""
   If Not Ok
     If TimedOut
@@ -1460,6 +1503,8 @@ Procedure.s FormatCheckResult(StartMs.i, LineCount.i, Ok.i, TimedOut.i, List Err
     EndIf
   EndIf
 
+  out$ + FormatWarnings(Warnings())
+
   ; best-practice notes: last section (least severe); silence on clean files
   ; keeps every pinned OK/ERROR shape byte-identical
   If SourceText$ <> "" And LineCount > 0
@@ -1489,11 +1534,13 @@ Structure CheckResT
   sourceText.s
   stagingError.s
   List errors.DiagT()
+  List warnings.DiagT()
 EndStructure
 
 ; runCheck: temp-copy + /CHECK + parse + rawTail extraction.
 Procedure RunCheck(CompilerExe$, AbsFile$, ProjectRoot$, *c.CheckResT)
   ClearList(*c\errors())
+  ClearList(*c\warnings())
   *c\ok = #False
   *c\lineCount = 0
   *c\timedOut = #False
@@ -1501,9 +1548,13 @@ Procedure RunCheck(CompilerExe$, AbsFile$, ProjectRoot$, *c.CheckResT)
   *c\sourceText = ""
   *c\stagingError = ""
 
-  Protected src$ = ReadSourceWhole(AbsFile$)
-  *c\sourceText = src$   ; single read: ToolCheck reuses this for hints/BpScan
-  *c\lineCount = SourceLines(src$)
+  Protected source.String
+  *c\lineCount = ReadCheckSource(AbsFile$, @source)
+  If *c\lineCount < 0
+    *c\rawTail = "cannot read source file: " + AbsFile$
+    ProcedureReturn
+  EndIf
+  *c\sourceText = source\s
 
   Protected copy.TempCopyT
   MakeTempCopy(AbsFile$, ProjectRoot$, @copy)
@@ -1516,8 +1567,7 @@ Procedure RunCheck(CompilerExe$, AbsFile$, ProjectRoot$, *c.CheckResT)
   CompilerStepWithRetry(CompilerExe$, #SW_CHECK$, copyile, PathJoin(copydir, "check" + #ExeSuffix$), GetPathPart(copyile), @proc)
   CleanupTempDir(copydir)
 
-  NewList warningsLocal.DiagT()
-  ParseDiagnostics(proc\stdout, *c\errors(), warningsLocal())
+  ParseDiagnostics(proc\stdout, *c\errors(), *c\warnings())
   *c\timedOut = proc\timedOut
   *c\ok = Bool(proc\spawnFailed = #False And proc\exitCode = 0 And proc\timedOut = #False And ListSize(*c\errors()) = 0)
 
@@ -1588,15 +1638,7 @@ Procedure ToolCheck(IdValue.i, Args.i)
   ForEach res\errors() : AddElement(msgs$()) : msgs$() = res\errors()\message : Next
   MetricsClassifyBuckets(msgs$(), buckets$())
 
-  ; source text feeds the hints + best-practice scan: RunCheck already read
-  ; and decoded it - reuse it under the same sane-size guard instead of a
-  ; second full read+UTF-8-decode of the file
-  Protected sourceText$ = ""
-  If FileSize(abs$) <= 512 * 1024
-    sourceText$ = res\sourceText
-  EndIf
-
-  Protected output$ = FormatCheckResult(startMs, res\lineCount, res\ok, res\timedOut, res\errors(), res\rawTail, fileArg$, sourceText$, buckets$())
+  Protected output$ = FormatCheckResult(startMs, res\lineCount, res\ok, res\timedOut, res\errors(), res\warnings(), res\rawTail, fileArg$, res\sourceText, buckets$())
   MetricsAppend("pb_check", abs$, okBuckets, ListSize(msgs$()), buckets$(), ElapsedMilliseconds() - startMs)
   SendTextResult(IdValue, output$, Bool(Not res\ok))
 EndProcedure

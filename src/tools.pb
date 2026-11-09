@@ -399,7 +399,7 @@ Procedure ToolList(IdValue.i)
   If Not gHttpMode Or gHttpAllowCompilerTools
   ; 3. pb_check
   schema = AddTool(tools, "pb_check", "Syntax-check PureBasic source",
-    "Syntax-check a PureBasic source file with the real compiler. Reports total processing time and structured errors with " +
+    "Syntax-check a PureBasic source file with the real compiler. Reports total processing time, errors and compiler warnings with " +
     "line numbers, high-confidence hints on common beginner errors, and best-practice notes (missing " +
     "EnableExplicit, Global inside procedures, Goto/Gosub). Check each coherent edit batch before delivery. The selected project " +
     "tree is copied to a bounded temporary workspace and the original files are never modified.",
@@ -411,7 +411,7 @@ Procedure ToolList(IdValue.i)
 
   ; 4. pb_run
   schema = AddTool(tools, "pb_run", "Compile and run PureBasic console program",
-    "Compile and run a PureBasic console program, capturing stdout. The agent can verify behavior end-to-end. " +
+    "Compile and run a PureBasic console program, reporting compiler warnings and capturing stdout. The agent can verify behavior end-to-end. " +
     "Console programs only — a GUI program will block until timeout; use pb_check for GUI code instead. " +
     "Console subsystem; 15 s default timeout. The project tree is copied to a bounded temporary workspace; " +
     "the program runs with the staged copy's entry directory as its working directory, so relative resources " +
