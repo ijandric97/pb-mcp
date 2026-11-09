@@ -4,6 +4,12 @@
 
 ### Added
 
+- Packaged-documentation smoke checks on both platforms verify the staged
+  `index.json`, compiler/help version agreement, and `OpenWindow` syntax without
+  an environment index override. Failures preserve the previous distribution.
+- Regressions for malformed docs-cache recovery, oversized command sections,
+  and the native Linux detached-descendant cleanup boundary.
+
 - Cancellation of active compiler/program calls, including descendant cleanup
   and suppression of the cancelled result. Pings remain responsive during
   execution; ordinary tool calls stay queued in arrival order.
@@ -81,6 +87,11 @@
   Windows checkouts used through WSL.
 
 ### Fixed
+
+- Malformed command/reference entries or reference text invalidate the local
+  docs cache, so rebuilding repairs it instead of embedding an unusable index.
+- Clarified that command output caps can cut syntax or parameters and that
+  detached Linux descendants can escape process-group cleanup.
 
 - Unicode compiler diagnostics retain complete messages and included paths,
   avoiding response corruption or crashes when regex captures contain emoji.

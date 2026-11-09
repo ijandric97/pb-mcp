@@ -45,10 +45,18 @@ rmSync(join(docs, 'Reference', 'commandindex.html'));
 assert.throws(() => findLocalHelp(home), /Local PureBasic help not found/);
 
 const source = { kind: 'local-tree', path: docs, sha256: hash, compiler: '/compiler', compilerVersion: '6.41', compilerSha256: 'compiler', parserSha256: 'parser' };
-const fixture = { schemaVersion: 1, purebasicVersion: '6.41', source, commands: [{}], reference: [], referenceText: {} };
+const fixture = { schemaVersion: 1, purebasicVersion: '6.41', source,
+  commands: [{ name: 'Boundary', parameters: [{ name: 'value', description: 'input' }], syntax: ['Boundary(value)'] }],
+  reference: [{ title: 'Language constructs', id: 'constructs', file: 'reference/constructs.html', summary: 'Language reference' }],
+  referenceText: { 'reference/constructs.html': 'Local reference text' } };
 assert.equal(cachedIndexMatches(fixture, source, '6.41'), true);
 for (const changed of [null, { ...fixture, purebasicVersion: '6.40' }, { ...fixture, commands: [] },
-  { ...fixture, reference: null }, { ...fixture, referenceText: [] }]) {
+  { ...fixture, commands: [{}] }, { ...fixture, commands: [{ name: ' ' }] },
+  { ...fixture, commands: [{ name: 'Boundary', syntax: ['valid', 42] }] },
+  { ...fixture, commands: [{ name: 'Boundary', parameters: [null] }] },
+  { ...fixture, reference: null }, { ...fixture, reference: [{}] },
+  { ...fixture, reference: [{ title: 'Language constructs', summary: 42 }] },
+  { ...fixture, referenceText: [] }, { ...fixture, referenceText: { 'reference/constructs.html': 42 } }]) {
   assert.ok(!cachedIndexMatches(changed, source, '6.41'), 'invalid cached index was reused');
 }
 for (const field of ['path', 'sha256', 'compiler', 'compilerVersion', 'compilerSha256', 'parserSha256']) {
@@ -118,6 +126,12 @@ assert.deepEqual(readFileSync(output), before);
 assert.equal(statSync(output).mtimeMs, modified, 'warm builds rewrote the index');
 assert.notEqual(build(join(scratch, 'missing-compiler')).status, 0);
 assert.deepEqual(readFileSync(output), before, 'failed generation replaced a working index');
+writeFileSync(output, JSON.stringify({ ...index, commands: [{}] }));
+const repairedShape = build();
+assert.equal(repairedShape.status, 0, repairedShape.stdout + repairedShape.stderr);
+assert.doesNotMatch(repairedShape.stdout, /unchanged/);
+assert.ok(JSON.parse(readFileSync(output, 'utf8')).commands.some(command => command.name === 'OpenWindow'),
+  'malformed cached command entry was not regenerated');
 writeFileSync(output, JSON.stringify({ ...index, purebasicVersion: 'stale-version' }));
 const repaired = build();
 assert.equal(repaired.status, 0, repaired.stdout + repaired.stderr);

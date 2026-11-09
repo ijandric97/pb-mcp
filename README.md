@@ -185,7 +185,7 @@ run `./build.cmd` or `bash build.sh`, then run the relevant standalone tests:
 | Installed-help indexing or its cache | `node test/local_index.mjs` |
 | Metrics | `node test/metrics.mjs` |
 | Online crawler | `node test/crawler.mjs` |
-| Build or packaging scripts | `node test/build.mjs` and `node test/packaging.mjs` |
+| Build or packaging scripts | `node test/build.mjs`, `node test/package_docs_test.mjs`, and `node test/packaging.mjs` |
 
 Crawler-only edits need no server rebuild; that test uses a local HTTP fixture.
 Standalone server tests use the root executable unless `PBMCP_EXE` selects
@@ -208,6 +208,10 @@ overwrite each other's fixtures or session files.
 Builds the binary and matching installed-help index in a sibling staging
 directory (via the `PBMCP_OUT` override), assembles the bundle, and runs the full
 local acceptance suite against the staged binary before replacing `dist/`.
+Before the suite, a separate docs smoke test clears `PUREBASIC_MCP_INDEX`,
+requires the staged `index.json`, checks compiler/help versions match, and
+looks up `OpenWindow` with its syntax. Run it independently with
+`node test/package_docs.mjs dist/pbmcp.exe` (Linux: `dist/pbmcp`).
 Failed builds or tests preserve the previous distribution:
 
     dist/pbmcp[.exe]                  native server binary
@@ -243,14 +247,17 @@ session. Check each coherent edit batch before delivery. `pb_run` rejects
 arguments containing double quotes, NUL, or newlines. Supported arguments are
 passed as separate program parameters. Its executable and compiler artifacts stay in temporary
 storage, while relative includes and runtime data paths use the original source.
-Remaining processes in each run's Windows job or Linux process group are
-terminated after normal exit, timeout, cancellation, or server termination.
-Compiler and program stdin is a separate closed pipe (EOF).
+Processes that remain in each run's Windows job or Linux process group are
+terminated after normal exit, timeout, cancellation, or server termination. On
+Linux, a descendant can escape this cleanup by creating a new session or
+process group (for example, with `setsid`) and may outlive the call. Compiler
+and program stdin is a separate closed pipe (EOF).
 
 Compiler tools process one call at a time while continuing to receive control
 messages. Pings can be answered before an earlier tool call finishes. Send an
 MCP `notifications/cancelled` notification with the active call's `requestId` to
-stop its compiler or program and descendants; the cancelled call sends no result.
+stop its compiler or program and contained descendants; the cancelled call
+sends no result. The Linux process-group limit above also applies to cancellation.
 Unknown, completed, or malformed cancellation notifications are ignored.
 Other tool calls remain queued in arrival order. Deferred input is bounded, so
 large pipelines apply backpressure to the input pipe.
@@ -409,6 +416,9 @@ reference. It is not used by the automatic source build:
   code examples retain line breaks/indentation, and `pb_command` caps the answer
   using its existing 14,000-character content limit. Command-target aliases reuse
   the indexed command documentation. Legacy indexes still resolve to a source URL.
+- Command answers also have a 14,000-character content limit. Syntax and
+  parameters appear first, but oversized sections can still be cut; a marker
+  reports how many characters were dropped.
 - `purebasicVersion` is `"online"` when built with `--pb-version online` —
   the site carries no version marker; `source` records the URL and crawl
   timestamp for auditability.

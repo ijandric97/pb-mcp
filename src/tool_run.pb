@@ -15,8 +15,8 @@
 ;     the --output spelling (no "/"-switches there).
 ;   - the program runs exactly ONCE, cwd = the staged entry directory
 ;     (relative data files resolve inside the copied project)
-;   - per-run jobs/groups terminate descendants after normal exit or timeout;
-;     the launch worker also contains children if the server exits
+;   - per-run jobs/groups terminate contained descendants after normal exit or timeout;
+;     Linux children that detach into another group can escape this cleanup
 ;   - the temp tree is always cleaned up, also on the error path
 ;
 ; Source-encoding rule: UTF-8 WITH BOM (see console.pb header).

@@ -58,10 +58,22 @@ export function helpHash(source) {
 }
 
 export function cachedIndexMatches(index, source, version) {
+  const stringFields = (entry, fields) => fields.every(field => entry[field] === undefined || typeof entry[field] === 'string');
+  const commandsValid = Array.isArray(index?.commands) && index.commands.length > 0 && index.commands.every(entry =>
+    entry && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.name === 'string' && entry.name.trim() !== ''
+      && stringFields(entry, ['name', 'library', 'file', 'description', 'returnValue', 'remarks', 'example'])
+      && ['syntax', 'os', 'seeAlso'].every(field => entry[field] === undefined ||
+        Array.isArray(entry[field]) && entry[field].every(value => typeof value === 'string'))
+      && (entry.parameters === undefined || Array.isArray(entry.parameters) && entry.parameters.every(param =>
+        param && typeof param === 'object' && !Array.isArray(param) && stringFields(param, ['name', 'description']))));
+  const referenceValid = Array.isArray(index?.reference) && index.reference.every(entry =>
+    entry && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.title === 'string' && entry.title.trim() !== ''
+      && stringFields(entry, ['title', 'id', 'file', 'summary']));
+  const textValid = index?.referenceText && !Array.isArray(index.referenceText) && typeof index.referenceText === 'object'
+    && Object.values(index.referenceText).every(value => typeof value === 'string');
   return index?.schemaVersion === 1 && index.purebasicVersion === version
     && JSON.stringify(index.source) === JSON.stringify(source)
-    && Array.isArray(index.commands) && index.commands.length > 0 && Array.isArray(index.reference)
-    && index.referenceText && !Array.isArray(index.referenceText) && typeof index.referenceText === 'object';
+    && commandsValid && referenceValid && textValid;
 }
 
 export function parserFingerprint(projectRoot = root) {

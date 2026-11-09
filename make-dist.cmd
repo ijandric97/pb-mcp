@@ -66,6 +66,10 @@ rem the suite's timing-sensitive tests)
 echo make-dist: smoke - staged pbmcp.exe version
 "%STAGE%\pbmcp.exe" version >nul 2>&1 || goto :fail
 
+echo make-dist: smoke - packaged documentation
+node "%~dp0test\package_docs.mjs" "%STAGE%\pbmcp.exe"
+if errorlevel 1 goto :fail
+
 echo make-dist: testing staged pbmcp.exe
 set "PBMCP_EXE=%STAGE%\pbmcp.exe"
 node "%~dp0test\run_tests.mjs"

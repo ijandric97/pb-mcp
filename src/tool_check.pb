@@ -16,7 +16,7 @@
 ;     (5.73's plain /CONSOLE auto-launches the program - the orphan that
 ;     motivated the whole pipeline; verified harmless-but-correct on 6.40)
 ;   - one retry for the known assembler write failure caused by file locks
-;   - per-run jobs/groups contain descendants on success, timeout, or server exit
+;   - per-run jobs/groups terminate contained descendants on success, timeout, or server exit
 ;   - temp dir always cleaned (retry with backoff; fresh exes are briefly
 ;     AV-locked); cleanup failure is never surfaced
 ;
@@ -451,7 +451,7 @@ EndImport
 #PBMCP_FD_CLOEXEC = 1
 #PBMCP_O_NONBLOCK = 2048
 
-; setsid gives each run its own group, including descendants whose parent exits.
+; shortcut: detached Linux descendants can escape; add stronger containment if they must be stopped.
 Procedure KillTree(Pid.i)
   If ProcessGroupSignal(-Pid, 15) = 0 : Delay(500) : EndIf
   ProcessGroupSignal(-Pid, 9)
@@ -566,7 +566,7 @@ Procedure CaptureBytes(*capture.CaptureT, *Buffer, Bytes.i)
 EndProcedure
 
 ; runProcess port: spawn without shell, capture stdout/stderr, enforce the
-; timeout, kill the tree on timeout. Both streams use bounded byte reads and
+; timeout, kill the contained process group/job. Both streams use bounded byte reads and
 ; decode UTF-8 once, so long lines cannot delay deadlines or grow without limit.
 Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
   *r\spawnFailed = #False
@@ -590,7 +590,7 @@ Procedure RunProcessCapture(Exe$, Params$, WorkingDir$, TimeoutMs.i, *r.RunResT)
     ProcedureReturn
   EndIf
   CompilerIf #PB_Compiler_OS = #PB_OS_Linux
-    ; The worker leads the group and kills it if the server exits.
+    ; The worker leads the group and kills its remaining members if the server exits.
     p = RunProgram("setsid", ProcQ(ProgramFilename()) + " --job-worker " + Str(ProcessOwnPid()) + " " + Str(errorPipe\writer) + " " + ProcQ(Exe$) + " " + Params$, WorkingDir$,
                    #PB_Program_Open | #PB_Program_Read | #PB_Program_Write | #PB_Program_Hide)
   CompilerElse

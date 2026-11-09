@@ -65,6 +65,9 @@ cp -R skills/purebasic/. "$STAGE/skills/purebasic/" || fail
 echo "make-dist: smoke - staged pbmcp version"
 "$STAGE/pbmcp" version >/dev/null 2>&1 || fail
 
+echo "make-dist: smoke - packaged documentation"
+node test/package_docs.mjs "$STAGE/pbmcp" || fail
+
 echo "make-dist: testing staged pbmcp"
 PBMCP_EXE="$STAGE/pbmcp" node test/run_tests.mjs || fail
 

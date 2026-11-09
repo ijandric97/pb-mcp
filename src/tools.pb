@@ -151,10 +151,8 @@ Procedure.s JoinJSONStrArray(Arr.i, Sep$)
   ProcedureReturn out$
 EndProcedure
 
-; Syntax and Parameters are never truncated - the final COMMAND_CAP clip can
-; only eat Description/Remarks/Example/SeeAlso; the exact call signature
-; always survives. Each section appends
-; independently, fixed order, "\n\n" between present sections.
+; Syntax and parameters come first, but the final COMMAND_CAP can truncate any
+; section, including an oversized signature. CapText appends a truncation marker.
 Procedure.s FormatCommandEntry(Entry.i)
   Protected parts$ = ""
   Protected retVal$ = Trim(MemberStr(Entry, "returnValue", ""))

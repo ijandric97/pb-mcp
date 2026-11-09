@@ -50,6 +50,9 @@ try {
   copyFileSync(join(root, win ? 'make-dist.cmd' : 'make-dist.sh'), script);
   mkdirSync(join(scratch, 'src'), { recursive: true });
   mkdirSync(join(scratch, 'test'), { recursive: true });
+  writeFileSync(join(scratch, 'test', 'package_docs.mjs'),
+    'if (process.env.FAIL_DOCS === "1") process.exit(1);\n' +
+    'if (process.argv[2] !== process.env.PBMCP_OUT) throw new Error("staged docs executable was not selected");\n');
   writeFileSync(join(scratch, 'test', 'run_tests.mjs'),
     'if (process.env.FAIL_TESTS === "1") process.exit(1);\n' +
     'if (!process.env.PBMCP_EXE) throw new Error("staged executable was not selected");\n');
@@ -101,6 +104,12 @@ try {
   result = run({ FAIL_SMOKE: '1' });
   assert.notEqual(result.status, 0, 'smoke failure unexpectedly succeeded');
   assert.deepEqual(snapshot(dist), previous, 'smoke failure changed the previous bundle');
+  assertNoStaging();
+
+  previous = setPreviousDist();
+  result = run({ FAIL_DOCS: '1' });
+  assert.notEqual(result.status, 0, 'packaged docs failure unexpectedly succeeded');
+  assert.deepEqual(snapshot(dist), previous, 'packaged docs failure changed the previous bundle');
   assertNoStaging();
 
   previous = setPreviousDist();
@@ -227,7 +236,7 @@ try {
     }
   }
 
-  console.log(`packaging tests passed (${win ? 'make-dist.cmd' : 'make-dist.sh'}: build/copy/smoke/test/move/publish/restore failures, successful replacement${win ? ', locked executable' : ''})`);
+  console.log(`packaging tests passed (${win ? 'make-dist.cmd' : 'make-dist.sh'}: build/copy/smoke/docs/test/move/publish/restore failures, successful replacement${win ? ', locked executable' : ''})`);
 } finally {
   const resolved = join(tempRoot, scratch.slice(tempRoot.length + 1));
   if (dirname(resolved) !== tempRoot) throw new Error(`unsafe cleanup target: ${resolved}`);

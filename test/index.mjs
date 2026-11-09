@@ -154,6 +154,17 @@ for (const name of ['Language constructs', 'CompilerIf', '#PB_Fixture']) {
 assert.ok(command('#PB_Window_SystemMenu').includes('Syntax: Result = OpenWindow('), 'command-target constant alias required a network fetch');
 const long = command('Long page');
 assert.ok(long.includes('truncated') && long.length < 14100 && long.includes('reference/long.html'), long.slice(-200));
+const commandCaps = join(scratch, 'command-caps.json');
+for (const field of ['syntax', 'parameters']) {
+  const content = 'x'.repeat(15000) + 'END_MARKER';
+  const entry = { name: 'LongCommand', syntax: ['LongCommand()'], [field]: field === 'syntax'
+    ? ['LongCommand(' + content + ')'] : [{ name: 'Value', description: content }] };
+  writeFileSync(commandCaps, JSON.stringify({ commands: [entry], reference: [] }));
+  const text = command('LongCommand', commandCaps);
+  assert.ok(text.startsWith('LongCommand  ['), text.slice(0, 100));
+  assert.match(text, /\n… \[\+\d+ chars truncated\]$/);
+  assert.ok(text.length < 14100 && !text.includes('END_MARKER'), `${field} exceeded the command cap`);
+}
 const legacy = join(scratch, 'legacy.json');
 delete index.referenceText;
 writeFileSync(legacy, JSON.stringify(index));
