@@ -176,6 +176,8 @@ Linux before committing changes. Each command builds with the installed
 compiler and matching help, then runs the full acceptance suite against that
 binary. Platform-specific branches need a native test run on each supported OS.
 The distribution scripts also run this suite before replacing the local bundle.
+Test runs use separate temporary directories so overlapping local checks do not
+overwrite each other's fixtures or session files.
 
 ## Distribution
 
@@ -303,6 +305,10 @@ envelope and any batch array. Brackets inside strings do not count.
 Deeper requests and lines containing raw NUL bytes receive `-32600` with a
 null ID; the next request line is processed normally. Escaped NUL characters
 in JSON strings are also rejected.
+Malformed UTF-8 and unpaired Unicode surrogate escapes are rejected with
+`-32600` and a null ID before decoding or native JSON processing. Valid surrogate
+pairs and literal escaped backslashes remain supported; subsequent requests are
+processed normally.
 Requests may be sent individually or in a batch array. A batch produces one
 response array; notifications receive no response. Invalid request envelopes
 and unknown tools return JSON-RPC errors. Tool execution failures use

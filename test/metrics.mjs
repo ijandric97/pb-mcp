@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeScratch } from './scratch.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const exe = resolve(process.env.PBMCP_EXE || join(root, 'pbmcp' + (process.platform === 'win32' ? '.exe' : '')));
 const source = join(root, 'test', 'fixtures', 'hello.pb');
 const tempRoot = resolve(tmpdir());
-const scratch = mkdtempSync(join(tempRoot, 'pbmcp-metrics-'));
+const scratch = makeScratch('metrics');
 const running = new Set();
 try {
   for (const zone of ['Pacific/Kiritimati', 'America/Adak']) {

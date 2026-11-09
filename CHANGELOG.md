@@ -78,6 +78,13 @@
 
 ### Fixed
 
+- Unpaired Unicode surrogate escapes are rejected before native JSON processing,
+  preventing a Windows heap-corruption crash. Valid pairs and escaped backslashes
+  retain their original values.
+- Malformed UTF-8 request frames are rejected before decoding, preserving request
+  identifiers and allowing the next frame to be processed normally.
+- Local test runs use isolated temporary fixtures and sessions, preventing
+  overlapping acceptance suites from overwriting or deleting each other's files.
 - Both compiler tools retain and display bounded warning sections without
   changing compile success or counting warnings as errors in metrics.
 - Source line counting streams fixed-size chunks and retains at most 512 KiB

@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeScratch } from './scratch.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const exe = resolve(process.env.PBMCP_EXE || join(root, 'pbmcp' + (process.platform === 'win32' ? '.exe' : '')));
-const scratch = join(root, 'test', 'out', 'protocol');
-mkdirSync(scratch, { recursive: true });
+const scratch = makeScratch('protocol');
 const env = { ...process.env, PUREBASIC_MCP_NO_METRICS: '1', PBMCP_DOCS_TIMING: '0',
   PUREBASIC_MCP_INDEX: join(root, 'test', 'fixtures', 'docs-index.json') };
 const request = (id, method = 'ping', params) => ({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
@@ -211,4 +211,49 @@ for (const fileMode of [false, true]) {
     assert.equal(rawSession(invalid, fileMode)[0].error.code, -32600, 'unterminated NUL frame accepted');
   }
 }
-console.log('protocol tests passed (envelopes/calls, exact numeric IDs, depth/NUL/frame limits and recovery, batch framing, notifications, execution hints, unknown tools/arguments)');
+// Reject malformed Unicode before native JSON/string conversion and recover on the next frame.
+for (const fileMode of [false, true]) {
+  const invalidEscapes = [String.raw`\ud800`, String.raw`\udbff`, String.raw`\udc00`, String.raw`\udfff`,
+    String.raw`\ud800x`, String.raw`\ud800\ud800`, String.raw`\udc00\ud800`,
+    String.raw`\ud800\\udc00`, String.raw`\ud800\u0041`, String.raw`\uDBFF\uDFFF\uDC00`];
+  const invalid = invalidEscapes.map(value => `{"jsonrpc":"2.0","id":"${value}","method":"ping"}`);
+  invalid.push(String.raw`{"jsonrpc":"2.0","id":1,"method":"ping","params":{"\ud800":"value"}}`,
+    String.raw`[{"jsonrpc":"2.0","id":1,"method":"ping","params":{"text":"\udfff"}}]`);
+  const replies = rawSession(invalid.map(line => line + '\n' + JSON.stringify(request('after-surrogate'))).join('\n') + '\n', fileMode);
+  assert.equal(replies.length, invalid.length * 2);
+  for (let i = 0; i < replies.length; i += 2) {
+    assert.equal(replies[i].id, null);
+    assert.equal(replies[i].error?.code, -32600);
+    assert.match(replies[i].error.message, /surrogate/i);
+    assert.deepEqual(replies[i + 1], { jsonrpc: '2.0', id: 'after-surrogate', result: {} });
+  }
+  for (const [raw, id] of [[String.raw`\ud800\udc00`, '\u{10000}'], [String.raw`\uDBFF\uDFFF`, '\u{10ffff}'],
+    [String.raw`\\ud800`, String.raw`\ud800`], [String.raw`\\\ud800\udc00`, '\\\u{10000}']]) {
+    assert.deepEqual(rawSession(`{"jsonrpc":"2.0","id":"${raw}","method":"ping"}\n`, fileMode),
+      [{ jsonrpc: '2.0', id, result: {} }]);
+  }
+
+  const malformed = [
+    [0x80], [0xbf], [0xc0, 0xaf], [0xc1, 0xbf], [0xc2], [0xc2, 0x20],
+    [0xe0, 0x9f, 0xbf], [0xed, 0xa0, 0x80], [0xed, 0xbf, 0xbf], [0xe1, 0x80],
+    [0xf0, 0x8f, 0xbf, 0xbf], [0xf4, 0x90, 0x80, 0x80], [0xf1, 0x80, 0x80],
+    [0xf5, 0x80, 0x80, 0x80], [0xfe], [0xff],
+  ];
+  const prefix = Buffer.from('{"jsonrpc":"2.0","id":"');
+  const suffix = Buffer.from('","method":"ping"}\n' + JSON.stringify(request('after-utf8')) + '\n');
+  const frames = malformed.map(bytes => Buffer.concat([prefix, Buffer.from(bytes), suffix]));
+  // The invalid continuation falls on the other side of the input chunk boundary.
+  frames.push(Buffer.concat([Buffer.alloc(65536 - prefix.length - 1, 0x20), prefix, Buffer.from([0xe0, 0x80, 0x80]), suffix]));
+  const utf8Replies = rawSession(Buffer.concat(frames), fileMode);
+  assert.equal(utf8Replies.length, frames.length * 2);
+  for (let i = 0; i < utf8Replies.length; i += 2) {
+    assert.equal(utf8Replies[i].id, null);
+    assert.equal(utf8Replies[i].error?.code, -32600);
+    assert.match(utf8Replies[i].error.message, /UTF-8/);
+    assert.deepEqual(utf8Replies[i + 1], { jsonrpc: '2.0', id: 'after-utf8', result: {} });
+  }
+  assert.match(rawSession(Buffer.concat([prefix, Buffer.from([0xf0, 0x90])]), fileMode)[0].error.message, /UTF-8/);
+  const boundaryId = String.fromCodePoint(0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xe000, 0xffff, 0x10000, 0x10ffff);
+  assert.deepEqual(session([request(boundaryId)], fileMode), [{ jsonrpc: '2.0', id: boundaryId, result: {} }]);
+}
+console.log('protocol tests passed (envelopes/calls, exact numeric IDs, Unicode/depth/NUL/frame limits and recovery, batch framing, notifications, execution hints, unknown tools/arguments)');

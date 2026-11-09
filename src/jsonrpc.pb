@@ -197,10 +197,10 @@ EndProcedure
 #MAX_JSON_DEPTH = 128
 
 ; Guard the native parser and retain numeric IDs before floating-point rounding.
-Procedure.i JsonPreflight(Text$, Map NumericIds.s(), *integerOverflow.Integer)
+Procedure.s JsonPreflight(Text$, Map NumericIds.s(), *integerOverflow.Integer)
   Protected i.i = 1, length.i = Len(Text$), c.i, start.i, real.i, limit$
   Protected depth.i, requestDepth.i, request.i, idStart.i, key$, keyPos.i
-  Protected paramsStart.i, paramsDepth.i, cancelStart.i, keyJson.i
+  Protected paramsStart.i, paramsDepth.i, cancelStart.i, keyJson.i, code.i, low.i
   *integerOverflow\i = #False
   While i <= length
     c = PeekU(@Text$ + (i - 1) * SizeOf(Character))
@@ -211,6 +211,18 @@ Procedure.i JsonPreflight(Text$, Map NumericIds.s(), *integerOverflow.Integer)
         c = PeekU(@Text$ + (i - 1) * SizeOf(Character))
         i + 1
         If c = 92
+          If Mid(Text$, i, 1) = "u"
+            code = Val("$" + Mid(Text$, i + 1, 4))
+            If code >= $D800 And code <= $DBFF
+              low = Val("$" + Mid(Text$, i + 7, 4))
+              If Mid(Text$, i + 5, 2) <> "\u" Or low < $DC00 Or low > $DFFF
+                ProcedureReturn "Unpaired Unicode surrogate in JSON string"
+              EndIf
+              i + 6
+            ElseIf code >= $DC00 And code <= $DFFF
+              ProcedureReturn "Unpaired Unicode surrogate in JSON string"
+            EndIf
+          EndIf
           i + 1
         ElseIf c = 34
           Break
@@ -277,7 +289,7 @@ Procedure.i JsonPreflight(Text$, Map NumericIds.s(), *integerOverflow.Integer)
         If depth = 0 : requestDepth = 1 + Bool(c = 91) : EndIf
         depth + 1
         If i = paramsStart And c = 123 : paramsDepth = depth : EndIf
-        If depth > #MAX_JSON_DEPTH : ProcedureReturn #False : EndIf
+        If depth > #MAX_JSON_DEPTH : ProcedureReturn "JSON nesting exceeds " + Str(#MAX_JSON_DEPTH) + " levels" : EndIf
       ElseIf c = 125 Or c = 93
         If depth = paramsDepth : paramsDepth = 0 : EndIf
         depth - 1
@@ -287,7 +299,7 @@ Procedure.i JsonPreflight(Text$, Map NumericIds.s(), *integerOverflow.Integer)
       i + 1
     EndIf
   Wend
-  ProcedureReturn #True
+  ProcedureReturn ""
 EndProcedure
 
 ; Parse a validated JSON number as an exact signed integer, including .0/e forms.
@@ -462,9 +474,10 @@ Procedure HandleLine(Raw$, ControlOnly.i = #False)
   EndIf
   NewMap numericIds.s()
   Protected integerOverflow.i
-  If Not JsonPreflight(line$, numericIds(), @integerOverflow)
+  Protected preflight$ = JsonPreflight(line$, numericIds(), @integerOverflow)
+  If preflight$ <> ""
     If ControlOnly : QueueInput(Raw$) : ProcedureReturn : EndIf
-    SendError(0, -32600, "JSON nesting exceeds " + Str(#MAX_JSON_DEPTH) + " levels")
+    SendError(0, -32600, preflight$)
     ProcedureReturn
   EndIf
   Protected json.i = ParseJSON(#PB_Any, line$)

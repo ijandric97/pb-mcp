@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
+import { makeScratch } from './scratch.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const exe = resolve(process.env.PBMCP_EXE || join(root, 'pbmcp' + (process.platform === 'win32' ? '.exe' : '')));
-const scratch = join(root, 'test', 'out', 'compiler');
-assert.equal(dirname(scratch), join(root, 'test', 'out'));
-rmSync(scratch, { recursive: true, force: true });
+const scratch = makeScratch('compiler');
 const project = join(scratch, 'project with spaces');
 mkdirSync(join(project, 'nested'), { recursive: true });
 mkdirSync(join(project, 'assets'), { recursive: true });

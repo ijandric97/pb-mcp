@@ -1,15 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeScratch } from './scratch.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const exe = resolve(process.env.PBMCP_EXE || join(root, 'pbmcp' + (process.platform === 'win32' ? '.exe' : '')));
-const scratch = join(root, 'test', 'out', 'index');
-assert.equal(dirname(scratch), join(root, 'test', 'out'));
-rmSync(scratch, { recursive: true, force: true });
-mkdirSync(scratch, { recursive: true });
+const scratch = makeScratch('index');
 const env = { ...process.env, PUREBASIC_MCP_NO_METRICS: '1', PBMCP_DOCS_TIMING: '0' };
 const fixturePages = join(root, 'test', 'fixtures_html_scan', 'pages');
 const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]);

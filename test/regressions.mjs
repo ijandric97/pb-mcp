@@ -1,17 +1,15 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, cpSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join, parse, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeScratch } from './scratch.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const win = process.platform === 'win32';
 const suffix = win ? '.exe' : '';
 const exe = resolve(process.env.PBMCP_EXE || join(root, 'pbmcp' + suffix));
-const scratch = join(root, 'test', 'out', 'regressions');
-assert.equal(dirname(scratch), join(root, 'test', 'out'));
-rmSync(scratch, { recursive: true, force: true });
-mkdirSync(scratch, { recursive: true });
+const scratch = makeScratch('regressions');
 const env = { ...process.env, PUREBASIC_MCP_NO_METRICS: '1', PBMCP_PRELOAD: '1', PBMCP_DOCS_TIMING: '0' };
 const cacheBase = join(scratch, 'cache');
 const cacheDir = join(cacheBase, 'purebasic-mcp');

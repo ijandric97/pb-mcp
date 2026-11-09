@@ -3,12 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeScratch } from './scratch.mjs';
 import { cachedIndexMatches, checkHelpVersion, findLocalHelp, helpHash, parserFingerprint } from '../tools/build-local-index.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const scratch = join(root, 'test', 'out', 'local-index');
-assert.equal(dirname(scratch), join(root, 'test', 'out'));
-rmSync(scratch, { recursive: true, force: true });
+const scratch = makeScratch('local-index');
 const home = join(scratch, 'installation with spaces');
 const docs = join(home, 'Help', 'English');
 mkdirSync(join(docs, 'Reference'), { recursive: true });

@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { makeScratch } from './scratch.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const crawler = join(root, 'tools', 'fetch-online-docs.mjs');
 const tempRoot = resolve(tmpdir());
-const scratch = resolve(mkdtempSync(join(tempRoot, 'pbmcp-crawler-')));
+const scratch = makeScratch('crawler');
 const scratchRelative = relative(tempRoot, scratch);
 const scratchInsideTemp = scratchRelative !== '' && !scratchRelative.startsWith('..') && !isAbsolute(scratchRelative);
 let mode = 'missing';

@@ -14,7 +14,7 @@
 //   [4] pb_check: OK line, bad.pb + EnableExplicit hint, hint fixtures,
 //       missing file, argument validation
 //   [5] pb_run: hello + args pass-through, compile fail, 2 s timeouts on
-//       both runaway fixtures, NO ORPHANS, no %TEMP% leftovers
+//       both runaway fixtures, NO ORPHANS, no isolated temp leftovers
 //   [6] metrics: frozen 8-field record shape (temp file only) +
 //       PUREBASIC_MCP_NO_METRICS=1 opt-out
 //   [7] file mode + live stdin wiring (all five tools)
@@ -26,16 +26,16 @@
 //        best-practices reference structure (BP01-BP30, nine topics), and
 //        local markdown link resolution
 //
-// Artifacts land in test/out/. Run:  node test/run_tests.mjs
+// Artifacts land in a unique system-temp directory. Run: node test/run_tests.mjs
 // Set PBMCP_EXE to test a build elsewhere - the repo-root exe is locked
 // while a live server runs on it.
 // ---------------------------------------------------------------------------
 import { spawnSync, spawn, execFileSync } from "node:child_process";
-import { writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, readdirSync } from "node:fs";
-import { join, dirname, relative } from "node:path";
-import { tmpdir } from "node:os";
+import { copyFileSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, readdirSync } from "node:fs";
+import { basename, join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dribble } from "./dribble.mjs";
+import { makeScratch } from "./scratch.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 // Platform-aware exe name (port Phase 4): pbmcp.exe on Windows, pbmcp on
@@ -46,14 +46,18 @@ const exeSuffix = IS_WIN ? ".exe" : "";
 const exe = process.env.PBMCP_EXE || join(root, `pbmcp${exeSuffix}`);
 if (!existsSync(exe)) throw new Error(`MCP executable not found: ${exe}. Run the native build first.`);
 const testDir = join(root, "test");
-const outDir = join(testDir, "out");
+const scratch = makeScratch("suite");
+const outDir = join(scratch, "run_tests");
 mkdirSync(outDir, { recursive: true });
 
 const FIX = join(testDir, "fixtures");
 const BAD = join(FIX, "bad.pb");
 const HELLO = join(FIX, "hello.pb");
-const RUNAWAY_SILENT = join(FIX, "runaway_silent.pb");
-const RUNAWAY_PRINT = join(FIX, "runaway_print.pb");
+const runTag = process.pid.toString(36);
+const RUNAWAY_SILENT = join(outDir, `rs${runTag}.pb`);
+const RUNAWAY_PRINT = join(outDir, `rp${runTag}.pb`);
+copyFileSync(join(FIX, "runaway_silent.pb"), RUNAWAY_SILENT);
+copyFileSync(join(FIX, "runaway_print.pb"), RUNAWAY_PRINT);
 const STDERR_FLOOD = join(FIX, "stderr_flood.pb");
 const HINTS = {
   dim: join(FIX, "hints_dim.pb"),
@@ -545,7 +549,7 @@ console.log("\n[5] pb_run: timeout / orphan / cleanup");
     return r.stdout.toLowerCase().includes(name.toLowerCase());
   };
   const pbmcpTempDirs = () => {
-    try { return readdirSync(tmpdir()).filter((d) => d.startsWith("pbmcp-")); } catch { return []; }
+    try { return readdirSync(scratch).filter((d) => d.startsWith("pbmcp-")); } catch { return []; }
   };
   const tempBefore = pbmcpTempDirs();
   const r = runPb(() => [
@@ -595,8 +599,10 @@ console.log("\n[5] pb_run: timeout / orphan / cleanup");
 
   // NO ORPHANS: the tree-kill must have taken both fixture exes down
   await sleep(400);
-  check("no orphan: runaway_silent.exe gone", !imageRunning("runaway_silent.exe"));
-  check("no orphan: runaway_print.exe gone", !imageRunning("runaway_print.exe"));
+  check(`no orphan: ${basename(RUNAWAY_SILENT, ".pb")}${exeSuffix} gone`,
+    !imageRunning(`${basename(RUNAWAY_SILENT, ".pb")}${exeSuffix}`));
+  check(`no orphan: ${basename(RUNAWAY_PRINT, ".pb")}${exeSuffix} gone`,
+    !imageRunning(`${basename(RUNAWAY_PRINT, ".pb")}${exeSuffix}`));
 
   const tempAfter = pbmcpTempDirs();
   const newLeftovers = tempAfter.filter((d) => !tempBefore.includes(d));
@@ -636,10 +642,10 @@ console.log("\n[6] metrics (temp metrics file; shared live file untouched)");
     writeFileSync(join(outDir, "metrics_record_sample.txt"), recs.join("\n"));
   }
 
-  const scratch = join(outDir, "no_metrics_should_not_exist.jsonl");
-  rmSync(scratch, { force: true });
-  runPb(build, { PUREBASIC_MCP_METRICS: scratch, PUREBASIC_MCP_NO_METRICS: "1" });
-  check("PUREBASIC_MCP_NO_METRICS=1 suppresses writes entirely", !existsSync(scratch));
+  const noMetricsPath = join(outDir, "no_metrics_should_not_exist.jsonl");
+  rmSync(noMetricsPath, { force: true });
+  runPb(build, { PUREBASIC_MCP_METRICS: noMetricsPath, PUREBASIC_MCP_NO_METRICS: "1" });
+  check("PUREBASIC_MCP_NO_METRICS=1 suppresses writes entirely", !existsSync(noMetricsPath));
 }
 
 // ===========================================================================
@@ -729,12 +735,12 @@ console.log("\n[8] missing-index UX (live, scratch dirs only)");
 {
   const HINT = `From a source checkout, run ${IS_WIN ? 'build.cmd' : 'bash build.sh'} to index the selected compiler's installed help and rebuild. For a packaged server, place a valid index.json next to the executable. If PUREBASIC_MCP_INDEX is set, fix or unset it, then restart the server.`;
   const EMBEDDED_EMPTY = "Docs index has no commands.";
-  const scratch = join(outDir, "ux_scratch");
-  const emptyDir = join(scratch, "empty");
-  const missingPath = join(scratch, "missing.json");
-  const badPath = join(scratch, "bad.json");
-  const emptyPath = join(scratch, "empty.json");
-  rmSync(scratch, { recursive: true, force: true });
+  const uxScratch = join(outDir, "ux_scratch");
+  const emptyDir = join(uxScratch, "empty");
+  const missingPath = join(uxScratch, "missing.json");
+  const badPath = join(uxScratch, "bad.json");
+  const emptyPath = join(uxScratch, "empty.json");
+  rmSync(uxScratch, { recursive: true, force: true });
   mkdirSync(emptyDir, { recursive: true });
   writeFileSync(badPath, "{oops");          // deliberately invalid JSON
   writeFileSync(emptyPath, JSON.stringify({ commands: [], reference: [] }));
@@ -795,8 +801,8 @@ console.log("\n[8] missing-index UX (live, scratch dirs only)");
       new RegExp(`^OK — 13 lines, \\d+ ms \\(${esc(HELLO)}\\)$`).test(pbCheck) && pb.byId.get(4)?.result?.isError === false, pbCheck);
   }
 
-  rmSync(scratch, { recursive: true, force: true });   // cleanup: scratch only
-  check("[8] scratch dir deleted after the UX section", !existsSync(scratch));
+  rmSync(uxScratch, { recursive: true, force: true });   // cleanup: scratch only
+  check("[8] scratch dir deleted after the UX section", !existsSync(uxScratch));
 }
 
 // ===========================================================================
@@ -897,7 +903,7 @@ try {
 }
 
 console.log("\n[12] compiler workflow, stdio lifecycle, and crawler regressions");
-for (const test of ["protocol.mjs", "compiler.mjs", "processes.mjs", "cancellation.mjs", "metrics.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs", "build.mjs", "packaging.mjs"]) {
+for (const test of ["protocol.mjs", "protocol_isolation.mjs", "compiler.mjs", "processes.mjs", "cancellation.mjs", "metrics.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs", "build.mjs", "packaging.mjs"]) {
   try {
     console.log(execFileSync(process.execPath, [join(testDir, test)], {
       cwd: root, env: { ...pinEnv(), PBMCP_EXE: exe }, encoding: "utf8", timeout: 60000, windowsHide: true,

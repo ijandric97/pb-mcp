@@ -4,15 +4,12 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeScratch } from './scratch.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const win = process.platform === 'win32';
 const exe = resolve(process.env.PBMCP_EXE || join(root, win ? 'pbmcp.exe' : 'pbmcp'));
-const scratch = join(root, 'test/out/cancellation');
-assert.equal(dirname(scratch), join(root, 'test/out'));
-rmSync(scratch, { recursive: true, force: true });
-mkdirSync(scratch, { recursive: true });
-process.on('exit', () => { try { rmSync(scratch, { recursive: true, force: true }); } catch {} });
+const scratch = makeScratch('cancellation');
 const env = { ...process.env, PUREBASIC_MCP_NO_METRICS: '1', PBMCP_PRELOAD: '0',
   PUREBASIC_MCP_INDEX: join(root, 'test/fixtures/docs-index.json') };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -171,12 +168,26 @@ try {
   unaffected.stdin.write('{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":{}}}\n');
   unaffected.stdin.write('{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"active","reason":1}}\n');
   unaffected.stdin.write('{"method":"notifications/cancelled","params":{"requestId":"active"}}\n');
+  unaffected.stdin.write('{"jsonrpc":"2.0","id":"bad-surrogate","method":"ping","params":{"text":"\\ud800"}}\n');
+  unaffected.stdin.write(Buffer.concat([
+    Buffer.from('{"jsonrpc":"2.0","id":"bad-utf8","method":"ping","params":{"text":"', 'utf8'),
+    Buffer.from([0xc0, 0xaf]),
+    Buffer.from('"}}\n', 'utf8'),
+  ]));
   unaffected.stdin.write(json(ping('still-live')));
   await waitFor(unaffected, () => unaffected.responses.some(r => r.id === 'still-live'), 'ping after ignored cancellation', 1500);
   await waitFor(unaffected, () => unaffected.responses.some(r => r.id === 'active'), 'uncancelled tool completion', 4000);
+  await waitFor(unaffected, () => unaffected.responses.some(r => /surrogate/i.test(r.error?.message || '')) &&
+    unaffected.responses.some(r => /UTF-8/i.test(r.error?.message || '')), 'deferred malformed Unicode errors', 1500);
   const result = unaffected.responses.find(r => r.id === 'active');
   assert.equal(result.result.isError, false, JSON.stringify(result));
   assert.match(result.result.content[0].text, /completed/);
+  const surrogateError = unaffected.responses.find(r => /surrogate/i.test(r.error?.message || ''));
+  const utf8Error = unaffected.responses.find(r => /UTF-8/i.test(r.error?.message || ''));
+  for (const response of [surrogateError, utf8Error]) {
+    assert.equal(response.id, null);
+    assert.equal(response.error.code, -32600);
+  }
 } finally {
   await closeServer(unaffected);
 }

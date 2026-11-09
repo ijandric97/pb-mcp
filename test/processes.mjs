@@ -4,14 +4,12 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeScratch } from './scratch.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const win = process.platform === 'win32';
 const exe = resolve(process.env.PBMCP_EXE || join(root, win ? 'pbmcp.exe' : 'pbmcp'));
-const scratch = join(root, 'test/out/processes');
-assert.equal(dirname(scratch), join(root, 'test/out'));
-rmSync(scratch, { recursive: true, force: true });
-mkdirSync(scratch, { recursive: true });
+const scratch = makeScratch('processes');
 const env = { ...process.env, PUREBASIC_MCP_NO_METRICS: '1', PBMCP_PRELOAD: '0',
   PUREBASIC_MCP_INDEX: join(root, 'test/fixtures/docs-index.json') };
 const report = spawnSync(exe, ['version'], { env, encoding: 'utf8', timeout: 20000, windowsHide: true });

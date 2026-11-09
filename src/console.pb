@@ -101,13 +101,34 @@ EndProcedure
 
 Procedure DecodeInputFrame(*frame.InputFrameT, Bytes.i)
   While Bytes > 0 And PeekA(*gInputBuffer + Bytes - 1) = 13 : Bytes - 1 : Wend
-  Protected i.i
+  Protected i.i, c.i, remaining.i, minimum.i = $80, maximum.i = $BF
   For i = 0 To Bytes - 1
-    If PeekA(*gInputBuffer + i) = 0
+    c = PeekA(*gInputBuffer + i)
+    If c = 0
       *frame\error = "NUL bytes are not supported in request lines"
       ProcedureReturn
     EndIf
+    If remaining
+      If c < minimum Or c > maximum : Break : EndIf
+      remaining - 1 : minimum = $80 : maximum = $BF
+    ElseIf c >= $80
+      ; Constrain the second byte to exclude overlong forms, surrogates and values above U+10FFFF.
+      Select c
+        Case $C2 To $DF : remaining = 1
+        Case $E0 : remaining = 2 : minimum = $A0
+        Case $E1 To $EC, $EE To $EF : remaining = 2
+        Case $ED : remaining = 2 : maximum = $9F
+        Case $F0 : remaining = 3 : minimum = $90
+        Case $F1 To $F3 : remaining = 3
+        Case $F4 : remaining = 3 : maximum = $8F
+        Default : Break
+      EndSelect
+    EndIf
   Next
+  If i < Bytes Or remaining
+    *frame\error = "Request line is not valid UTF-8"
+    ProcedureReturn
+  EndIf
   If Bytes > 0 : *frame\text = PeekS(*gInputBuffer, Bytes, #PB_UTF8 | #PB_ByteLength) : EndIf
 EndProcedure
 
