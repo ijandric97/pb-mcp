@@ -107,6 +107,43 @@ for (const tool of ['pb_check', 'pb_run']) {
   assert.ok(!output.includes('warning 40'), output);
   assert.match(output, /… \+5 more warnings/);
 }
+for (const message of ['rocket 🚀', 'rocket 🚀 end', '😀😀']) {
+  writeFileSync(warningSource, '\uFEFFEnableExplicit\nCompilerWarning "' + message + '"\n');
+  for (const tool of ['pb_check', 'pb_run']) {
+    assert.ok(ok(invoke(tool, { file: warningSource })).includes('Line 2: ' + message), 'Unicode warning was truncated');
+  }
+}
+const unicodeInclude = join(project, 'nested', 'broken 🚀.pbi');
+writeFileSync(brokenMain, '\uFEFFEnableExplicit\nXIncludeFile "nested/broken 🚀.pbi"\n');
+writeFileSync(unicodeInclude, '\uFEFFEnableExplicit\nCompilerError "failure 🚀 end 😀"\n');
+for (const tool of ['pb_check', 'pb_run']) {
+  const failed = invoke(tool, { file: brokenMain });
+  assert.equal(failed.result.isError, true, text(failed));
+  assert.ok(text(failed).includes('failure 🚀 end 😀'), text(failed));
+  assert.ok(text(failed).includes(unicodeInclude), 'Unicode include path was truncated: ' + text(failed));
+}
+const cappedOutput = join(scratch, 'capped-output.pb');
+writeFileSync(cappedOutput, '\uFEFFEnableExplicit\nIf OpenConsole()\n' +
+  '  Define value.s = LSet("x", Val(ProgramParameter(0)), "x") + "🚀tail"\n' +
+  '  If ProgramParameter(1) = "stderr" : ConsoleError(value) : Else : PrintN(value) : EndIf\n' +
+  '  CloseConsole()\nEndIf\n');
+for (const [stream, cap] of [['stdout', 10000], ['stderr', 4000]]) {
+  for (const offset of [-2, -1, 0]) {
+    const output = ok(invoke('pb_run', { file: cappedOutput, args: [String(cap + offset), stream] }));
+    const kept = offset === -1 ? cap - 1 : cap;
+    const prefix = ('x'.repeat(cap + offset) + '🚀tail').slice(0, kept);
+    assert.ok(output.includes(prefix + '\n… [+' + (cap + offset + 6 - kept) + ' chars truncated]'), output.slice(-150));
+    assert.ok(!output.includes('\uFFFD'), 'output cap damaged an emoji');
+  }
+}
+const summaryIndex = join(scratch, 'summary-index.json');
+for (const offset of [-2, -1, 0]) {
+  const description = 'x'.repeat(59 + offset) + '🚀tail';
+  writeFileSync(summaryIndex, JSON.stringify({ commands: [{ name: 'Boundary', library: 'Test', description }], reference: [] }));
+  const output = ok(invoke('pb_docs_search', { query: 'Boundary' }, { PUREBASIC_MCP_INDEX: summaryIndex }));
+  assert.ok(output.includes(' — ' + description.slice(0, offset === -1 ? 58 : 59) + '…'), output);
+  assert.ok(!output.includes('\uFFFD'), 'summary cap damaged an emoji');
+}
 const args = ['alpha', 'beta gamma', '', 'tail\\', 'tab\tvalue', String.raw`\u0000`, String.raw`\\u0000`];
 const echoed = ok(invoke('pb_run', { file: hello, args }));
 assert.deepEqual(echoed.split(/\r?\n/).filter(line => /^arg\d+=/.test(line)).map(line => line.slice(line.indexOf('=') + 1)), args);
@@ -349,6 +386,10 @@ If ListSize(parsedErrors()) <> 1 Or ListSize(parsedWarnings()) <> 2 : End 15 : E
 FirstElement(parsedErrors())
 If parsedErrors()\\line <> 2 Or parsedErrors()\\file <> "nested.pbi" Or parsedErrors()\\message <> "failure" : End 16 : EndIf
 If StripCompilerNoise(" " + Chr(10) + "one" + Chr(13) + Chr(10) + Chr(10) + Chr(10) + "two") <> "one" + Chr(10) + Chr(10) + "two" : End 17 : EndIf
+Define unicodeRegex.i = CreateRegularExpression(#PB_Any, "prefix (.+?) /(.*)$")
+If ReMatch(unicodeRegex, "🚀 prefix café 🚀 /end 😀") = #False : End 24 : EndIf
+If gReG1 <> "café 🚀" Or gReG2 <> "end 😀" : End 25 : EndIf
+FreeRegularExpression(unicodeRegex)
 PrintN("1 MiB diagnostic lines parsed and stripped in " + Str(parseMs) + " ms")
 PrintN("stderr capture bounded")
 CloseConsole()

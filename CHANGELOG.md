@@ -82,6 +82,14 @@
 
 ### Fixed
 
+- Unicode compiler diagnostics retain complete messages and included paths,
+  avoiding response corruption or crashes when regex captures contain emoji.
+- Response and search-summary limits preserve UTF-16 surrogate pairs and report
+  the actual number of omitted code units.
+- Compiler version probes receive a separate closed stdin pipe, preventing
+  compiler input reads from consuming MCP requests.
+- HTML scanning skips script/style raw text without treating tag-like strings
+  as markup, preserving the surrounding documentation sections.
 - Compiler failures without source line numbers retain bounded raw diagnostics,
   including the missing symbol behind a generic linker error.
 - Compiler retries are limited to the known assembler write failure; permanent

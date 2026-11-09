@@ -60,8 +60,9 @@ Global gCapBannerFilter.i = #True   ; conservative default until init
 ; on purpose (6.40 /VERSION exits 1). Returns "" when detection fails.
 Procedure.s ConfigDetectVersion(compilerPath$)
   Protected p.i = RunProgram(compilerPath$, #SW_VERSION$, "",
-                             #PB_Program_Open | #PB_Program_Read | #PB_Program_Hide)
+                             #PB_Program_Open | #PB_Program_Read | #PB_Program_Write | #PB_Program_Hide)
   If p = 0 : ProcedureReturn "" : EndIf
+  WriteProgramData(p, #PB_Program_Eof, 0)
   Protected out$ = "", t0.i = ElapsedMilliseconds()
   Protected *buffer = AllocateMemory(65536), kept.i, available.i, n.i
   If *buffer

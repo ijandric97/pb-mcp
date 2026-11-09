@@ -209,6 +209,23 @@ Procedure HtmlParseAttributes(TagText$, *href.String, *size.String)
   Wend
 EndProcedure
 
+Procedure.i HtmlFindRawTextEnd(Start.i, Tag$)
+  Protected pos.i = Start, close.i, boundary.i, c$
+  While pos <= Len(gHtmlSource$)
+    close = FindString(gHtmlSource$, "</", pos)
+    If close = 0 : ProcedureReturn 0 : EndIf
+    boundary = close + Len(Tag$) + 2
+    If boundary <= Len(gHtmlSource$) And LCase(Mid(gHtmlSource$, close, Len(Tag$) + 2)) = "</" + Tag$
+      c$ = Mid(gHtmlSource$, boundary, 1)
+      If c$ = ">" Or c$ = "/" Or c$ = " " Or Asc(c$) = 9 Or Asc(c$) = 10 Or Asc(c$) = 12 Or Asc(c$) = 13
+        ProcedureReturn close
+      EndIf
+    EndIf
+    pos = close + 2
+  Wend
+  ProcedureReturn 0
+EndProcedure
+
 Procedure HtmlParseTree(Html$)
   gHtmlSource$ = ReplaceString(Html$, Chr(13) + Chr(10), Chr(10))
   gHtmlSource$ = ReplaceString(gHtmlSource$, Chr(13), Chr(10))
@@ -216,7 +233,7 @@ Procedure HtmlParseTree(Html$)
   ReDim gHtmlNode.HtmlNodeT(1024)
   HtmlAddNode(-1, 1, "#root", "", "", "")
   Dim stack.i(8192)
-  Protected depth.i = 1, pos.i = 1, lt.i, gt.i, close.i, raw$, tag$, attrs$, i.i, j.i, n.i, nameChar$, selfClose.i, node.i
+  Protected depth.i = 1, pos.i = 1, lt.i, gt.i, close.i, rawEnd.i, raw$, tag$, attrs$, i.i, j.i, n.i, nameChar$, selfClose.i, node.i
   stack(0) = 1
   While pos <= Len(gHtmlSource$)
     lt = FindString(gHtmlSource$, "<", pos)
@@ -264,6 +281,13 @@ Procedure HtmlParseTree(Html$)
         EndIf
       Next
     ElseIf tag$ <> ""
+      If tag$ = "script" Or tag$ = "style"
+        rawEnd = HtmlFindRawTextEnd(gt + 1, tag$)
+        If rawEnd = 0 : Break : EndIf
+        gt = HtmlFindTagEnd(rawEnd + 1)
+        If gt = 0 : Break : EndIf
+        pos = gt + 1 : Continue
+      EndIf
       ; Parse5-lite implicit closes for paragraph, table rows/cells and list items.
       If tag$ = "p" Or tag$ = "address" Or tag$ = "article" Or tag$ = "aside" Or tag$ = "blockquote" Or tag$ = "button" Or tag$ = "center" Or tag$ = "details" Or tag$ = "dir" Or tag$ = "div" Or tag$ = "dl" Or tag$ = "fieldset" Or tag$ = "figcaption" Or tag$ = "figure" Or tag$ = "footer" Or tag$ = "form" Or tag$ = "h1" Or tag$ = "h2" Or tag$ = "h3" Or tag$ = "h4" Or tag$ = "h5" Or tag$ = "h6" Or tag$ = "header" Or tag$ = "hgroup" Or tag$ = "hr" Or tag$ = "listing" Or tag$ = "main" Or tag$ = "menu" Or tag$ = "nav" Or tag$ = "ol" Or tag$ = "pre" Or tag$ = "search" Or tag$ = "section" Or tag$ = "summary" Or tag$ = "table" Or tag$ = "ul"
         For j = depth - 1 To 1 Step -1

@@ -79,6 +79,15 @@ const boundaries = [
   ['os', section('Supported OS', '<p>' + sequence(1025, i => `OS${i}, `) + '</p>'), record => {
     assert.equal(record.os.length, 1025); assert.equal(record.os.at(-1), 'OS1025');
   }],
+  ['script-raw-text', section('Description', '<script>const lookalike = "</scripture>"; const marker = "</body>";</script><p>script survived</p>'), record => {
+    assert.equal(record.description, 'script survived');
+  }],
+  ['style-raw-text', section('Description', '<style>body::after { content: "</body>"; }</StYlE \t><p>style survived</p>'), record => {
+    assert.equal(record.description, 'style survived');
+  }],
+  ['unclosed-raw-text', section('Description', '<script>const marker = "</body>"; <p>must not appear</p>'), record => {
+    assert.equal(record.description, '');
+  }],
 ];
 const boundaryPages = boundaries.map(([name, html]) => {
   const path = join(scratch, name + '.html');

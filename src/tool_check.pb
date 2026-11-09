@@ -108,6 +108,15 @@ Procedure.s OneLine(Text$)
   ProcedureReturn OneLineCap(Text$, 0, @capped)
 EndProcedure
 
+Procedure.s SafePrefix(Text$, Max.i)
+  If Max > 0 And Max < Len(Text$)
+    Protected last.i = PeekU(@Text$ + (Max - 1) * SizeOf(Character))
+    Protected following.i = PeekU(@Text$ + Max * SizeOf(Character))
+    If last >= $D800 And last <= $DBFF And following >= $DC00 And following <= $DFFF : Max - 1 : EndIf
+  EndIf
+  ProcedureReturn Left(Text$, Max)
+EndProcedure
+
 ; First sentence, capped at ~max chars with an ellipsis (= firstSentence).
 ; Early cap: only the first Max+1 one-lined chars can influence the result,
 ; so the one-lining stops there instead of processing the whole text.
@@ -121,7 +130,7 @@ Procedure.s FirstSentence(Text$, Max.i = 60)
     ; within the first Max chars (endPos <= Max, so it is inside the window)
     ; or the Max-1 truncation with ellipsis applies
     If endPos > 0 And endPos <= Max : ProcedureReturn Left(line$, endPos) : EndIf
-    ProcedureReturn RTrim(Left(line$, Max - 1)) + "…"
+    ProcedureReturn RTrim(SafePrefix(line$, Max - 1)) + "…"
   EndIf
   ; uncapped: |line$| <= Max, so |sentence$| <= Max - never truncated
   Protected sentence$
@@ -136,7 +145,8 @@ EndProcedure
 ; Hard-cap text, marking how much was dropped (= cap).
 Procedure.s CapText(Text$, Max.i)
   If Len(Text$) <= Max : ProcedureReturn Text$ : EndIf
-  ProcedureReturn Left(Text$, Max) + Chr(10) + "… [+" + Str(Len(Text$) - Max) + " chars truncated]"
+  Protected prefix$ = SafePrefix(Text$, Max)
+  ProcedureReturn prefix$ + Chr(10) + "… [+" + Str(Len(Text$) - Len(prefix$)) + " chars truncated]"
 EndProcedure
 
 ; Collapse long examples by LINES (= collapseLines, keep default 20).
@@ -217,6 +227,25 @@ Global gDiagReady.i = #False
 Global gReG1.s
 Global gReG2.s
 
+; PB regex offsets count Unicode code points; Mid() needs UTF-16 code units.
+Procedure.s RegexGroupText(Re.i, Text$, Group.i)
+  Protected first.i = RegularExpressionMatchPosition(Re) + RegularExpressionGroupPosition(Re, Group) - 1
+  Protected count.i = RegularExpressionGroupLength(Re, Group)
+  If first < 1 Or count <= 0 : ProcedureReturn "" : EndIf
+  Protected finish.i = first + count, character.i = 1, unit.i = 1, start.i = 1
+  Protected units.i = Len(Text$), code.i
+  While character < finish And unit <= units
+    If character = first : start = unit : EndIf
+    code = PeekU(@Text$ + (unit - 1) * SizeOf(Character))
+    If code >= $D800 And code <= $DBFF And unit < units
+      code = PeekU(@Text$ + unit * SizeOf(Character))
+      If code >= $DC00 And code <= $DFFF : unit + 1 : EndIf
+    EndIf
+    unit + 1 : character + 1
+  Wend
+  ProcedureReturn Mid(Text$, start, unit - start)
+EndProcedure
+
 ; Match Text$ against Re (must be a compiled #PB_Any regex); on a match fill
 ; gReG1/gReG2 with groups 1/2 ("" when the group does not exist). Returns the
 ; match result. Only the FIRST match of a single-line pattern is needed here
@@ -228,8 +257,8 @@ Procedure.i ReMatch(Re.i, Text$)
   If ExamineRegularExpression(Re, Text$)
     If NextRegularExpressionMatch(Re)
       matched = #True
-      If CountRegularExpressionGroups(Re) >= 1 : gReG1 = RegularExpressionGroup(Re, 1) : EndIf
-      If CountRegularExpressionGroups(Re) >= 2 : gReG2 = RegularExpressionGroup(Re, 2) : EndIf
+      If CountRegularExpressionGroups(Re) >= 1 : gReG1 = RegexGroupText(Re, Text$, 1) : EndIf
+      If CountRegularExpressionGroups(Re) >= 2 : gReG2 = RegexGroupText(Re, Text$, 2) : EndIf
     EndIf
   EndIf
   ProcedureReturn matched

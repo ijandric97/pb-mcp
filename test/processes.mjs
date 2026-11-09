@@ -116,37 +116,47 @@ Define ready.i = CreateFile(#PB_Any, GetEnvironmentVariable("PBMCP_STDIN_READY")
 If ready = 0 : End 2 : EndIf
 CloseFile(ready)
 Define byte.a, bytes.i = ReadConsoleData(@byte, 1)
+PrintN("PureBasic 6.41")
 PrintN("stdin-bytes=" + Str(bytes))
 CloseConsole()
 `);
-const stdinServer = spawn(exe, [], { env: { ...env, PBMCP_STDIN_READY: stdinReady },
-  windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-let stdinOutput = '', stdinError = '', stdinFailure;
-stdinServer.stdout.setEncoding('utf8').on('data', value => stdinOutput += value);
-stdinServer.stderr.setEncoding('utf8').on('data', value => stdinError += value);
-stdinServer.on('error', error => { stdinFailure = error; });
-stdinServer.stdin.on('error', error => { stdinFailure = error; });
-const stdinClosed = new Promise(resolve => stdinServer.on('close', resolve));
-const stdinTimer = setTimeout(() => stdinServer.kill('SIGKILL'), 15000);
-try {
-  stdinServer.stdin.write(request('pb_run', { file: stdinReader, timeoutMs: 3000 }));
-  const deadline = performance.now() + 10000;
-  while (!existsSync(stdinReady) && stdinServer.exitCode === null && performance.now() < deadline && !stdinFailure) await sleep(10);
-  assert.ifError(stdinFailure);
-  assert.ok(existsSync(stdinReady), 'stdin reader never started: ' + stdinError);
-  stdinServer.stdin.end(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' }) + '\n');
-  assert.equal(await stdinClosed, 0, stdinError);
-  assert.ifError(stdinFailure);
-  const responses = stdinOutput.trim().split('\n').map(JSON.parse);
-  assert.equal(responses.length, 2, stdinOutput);
-  const runResponse = responses.find(response => response.id === 1);
-  assert.equal(runResponse.result.isError, false, stdinOutput);
-  assert.match(runResponse.result.content[0].text, /stdin-bytes=0/);
-  assert.deepEqual(responses.find(response => response.id === 2), { jsonrpc: '2.0', id: 2, result: {} }, 'child consumed an MCP request');
-} finally {
-  clearTimeout(stdinTimer);
-  if (stdinServer.exitCode === null) stdinServer.kill('SIGKILL');
-  await stdinClosed;
+const stdinHome = join(scratch, 'stdin-home');
+const stdinCompiler = join(stdinHome, win ? 'Compilers/pbcompiler.exe' : 'compilers/pbcompiler');
+mkdirSync(dirname(stdinCompiler), { recursive: true });
+compile(stdinReader, stdinCompiler);
+for (const mode of ['program', 'version']) {
+  rmSync(stdinReady, { force: true });
+  const stdinServer = spawn(exe, [], { env: { ...env, PBMCP_STDIN_READY: stdinReady,
+    ...(mode === 'version' ? { PUREBASIC_HOME: stdinHome } : {}) },
+    windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  let stdinOutput = '', stdinError = '', stdinFailure;
+  stdinServer.stdout.setEncoding('utf8').on('data', value => stdinOutput += value);
+  stdinServer.stderr.setEncoding('utf8').on('data', value => stdinError += value);
+  stdinServer.on('error', error => { stdinFailure = error; });
+  stdinServer.stdin.on('error', error => { stdinFailure = error; });
+  const stdinClosed = new Promise(resolve => stdinServer.on('close', resolve));
+  const stdinTimer = setTimeout(() => stdinServer.kill('SIGKILL'), 15000);
+  try {
+    stdinServer.stdin.write(mode === 'version' ? request('pb_version', {})
+      : request('pb_run', { file: stdinReader, timeoutMs: 3000 }));
+    const deadline = performance.now() + 10000;
+    while (!existsSync(stdinReady) && stdinServer.exitCode === null && performance.now() < deadline && !stdinFailure) await sleep(10);
+    assert.ifError(stdinFailure);
+    assert.ok(existsSync(stdinReady), 'stdin reader never started: ' + stdinError);
+    stdinServer.stdin.end(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' }) + '\n');
+    assert.equal(await stdinClosed, 0, stdinError);
+    assert.ifError(stdinFailure);
+    const responses = stdinOutput.trim().split('\n').map(JSON.parse);
+    assert.equal(responses.length, 2, stdinOutput);
+    const runResponse = responses.find(response => response.id === 1);
+    assert.equal(runResponse.result.isError, false, stdinOutput);
+    assert.match(runResponse.result.content[0].text, mode === 'version' ? /PureBasic 6\.41 — / : /stdin-bytes=0/);
+    assert.deepEqual(responses.find(response => response.id === 2), { jsonrpc: '2.0', id: 2, result: {} }, 'child consumed an MCP request');
+  } finally {
+    clearTimeout(stdinTimer);
+    if (stdinServer.exitCode === null) stdinServer.kill('SIGKILL');
+    await stdinClosed;
+  }
 }
 
 // Exercise both real reporters with the state produced by PATH-only discovery.
