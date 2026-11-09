@@ -148,13 +148,13 @@ const args = ['alpha', 'beta gamma', '', 'tail\\', 'tab\tvalue', String.raw`\u00
 const echoed = ok(invoke('pb_run', { file: hello, args }));
 assert.deepEqual(echoed.split(/\r?\n/).filter(line => /^arg\d+=/.test(line)).map(line => line.slice(line.indexOf('=') + 1)), args);
 const rejected = invoke('pb_run', { file: hello, args: ['alpha', 'quote "inner" arg'] });
-assert.equal(rejected.result.isError, true);
-assert.match(text(rejected), /Double quotes are not supported.*args\.1/);
-assert.ok(!text(rejected).includes('hello from pb_run'), 'unsupported arguments reached the executable');
+assert.equal(rejected.error?.code, -32602);
+assert.match(rejected.error.message, /Double quotes are not supported.*args\.1/);
+assert.equal('result' in rejected, false, 'unsupported arguments reached the executable');
 for (const value of ['line\nbreak', 'carriage\rreturn']) {
   const invalid = invoke('pb_run', { file: hello, args: ['alpha', value] });
-  assert.equal(invalid.result.isError, true, text(invalid));
-  assert.match(text(invalid), /Newlines are not supported.*args\.1/);
+  assert.equal(invalid.error?.code, -32602);
+  assert.match(invalid.error.message, /Newlines are not supported.*args\.1/);
 }
 for (const value of ['nul\0value', '\\' + '\0']) {
   const invalid = invoke('pb_run', { file: hello, args: [value] });

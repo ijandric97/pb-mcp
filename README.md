@@ -65,6 +65,9 @@ The first build compiles a temporary scanner, extracts/parses the local help,
 then embeds the resulting `src/pbdocs-index.json` in the final executable.
 No existing server binary or network access is required. Subsequent builds
 reuse that index when the compiler, help content, scanner, and index builders are unchanged.
+The cache also verifies a SHA-256 digest of the generated index content, so
+valid-looking edits or missing entries trigger regeneration. Older caches
+without a digest rebuild once; existing runtime indexes remain readable.
 Edits to compiler execution, metrics, or MCP request handling keep the docs cache warm.
 The previous index remains intact if generation fails. Changing installations
 or updating the help automatically invalidates the cache.
@@ -349,9 +352,9 @@ Requests may be sent individually or in a batch array of at most 64 items,
 including notifications. A larger batch receives one error `-32600` with a null
 ID before any item executes. A valid batch produces one response array;
 notifications receive no response. Invalid request envelopes
-and unknown tools return JSON-RPC errors. Tool execution failures use
-`result.isError`. Unknown tool argument names are rejected, matching the
-advertised input schemas.
+and unknown tools return JSON-RPC errors. Invalid tool arguments, including
+unknown argument names, return JSON-RPC error `-32602` with the request ID.
+Tool execution failures use `result.isError`.
 
 The batch scanner takes a UTF-8 JSON array of objects with non-empty `path`,
 `library`, and `file` strings. It emits one command JSON line per entry, in input

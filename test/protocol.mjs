@@ -165,10 +165,32 @@ for (const tool of toolSchemas) {
       request(1, 'tools/call', { name: tool.name, arguments: { ...validArgs[tool.name], [key]: true } }),
       request('after-unknown-argument'),
     ]);
-    assert.equal(response.result?.isError, true, JSON.stringify(response));
-    assert.ok(response.result.content[0].text.includes(`Invalid arguments for tool ${tool.name}: Unknown argument at ${key}`));
+    assert.deepEqual(response, { jsonrpc: '2.0', id: 1, error: { code: -32602,
+      message: `Invalid arguments for tool ${tool.name}: Unknown argument at ${key}` } });
     assert.deepEqual(next, { jsonrpc: '2.0', id: 'after-unknown-argument', result: {} });
   }
+}
+const invalidToolArgs = [
+  ['pb_command', {}, 'Required at name'],
+  ['pb_command', { name: 42 }, 'Expected string, received number at name'],
+  ['pb_command', { name: '' }, 'String must contain at least 1 character(s) at name'],
+  ['pb_command', { name: 'x'.repeat(81) }, 'String must contain at most 80 character(s) at name'],
+  ['pb_docs_search', { query: 'window', limit: 0 }, 'Number must be greater than or equal to 1 at limit'],
+  ['pb_docs_search', { query: 'window', limit: 26 }, 'Number must be less than or equal to 25 at limit'],
+  ['pb_docs_search', { query: 'window', limit: 1.5 }, 'Expected integer, received 1.5 at limit'],
+  ['pb_check', { file: 42 }, 'Expected string, received number at file'],
+  ['pb_run', { ...validArgs.pb_run, args: 'bad' }, 'Expected array, received string at args'],
+  ['pb_run', { ...validArgs.pb_run, args: [42] }, 'Expected string, received number at args.0'],
+  ['pb_run', { ...validArgs.pb_run, timeoutMs: 'bad' }, 'Expected number, received string at timeoutMs'],
+];
+for (const fileMode of [false, true]) {
+  const calls = invalidToolArgs.map(([name, args], i) => request(i, 'tools/call', { name, arguments: args }));
+  const replies = session([calls, request('after-invalid-arguments')], fileMode);
+  assert.equal(replies.length, 2);
+  assert.deepEqual(replies.find(Array.isArray), invalidToolArgs.map(([name, , issue], id) => ({ jsonrpc: '2.0', id,
+    error: { code: -32602, message: `Invalid arguments for tool ${name}: ${issue}` } })));
+  assert.deepEqual(replies.find(reply => reply.id === 'after-invalid-arguments'),
+    { jsonrpc: '2.0', id: 'after-invalid-arguments', result: {} });
 }
 assert.equal(session([request(1, 'tools/call', { name: 'missing', arguments: { unexpected: true } })])[0].error.message,
   'Tool missing not found');

@@ -168,7 +168,12 @@ for (const field of ['syntax', 'parameters']) {
 const legacy = join(scratch, 'legacy.json');
 delete index.referenceText;
 writeFileSync(legacy, JSON.stringify(index));
-assert.ok(command('Language constructs', legacy).includes('Local text is unavailable'), 'old indexes lost their source-URL fallback');
+const fallback = command('Language constructs', legacy);
+assert.ok(fallback.includes('Local text is unavailable'), 'old indexes lost their source-URL fallback');
+assert.ok(fallback.includes('build.cmd (Windows) or bash build.sh (Linux)'), fallback);
+assert.ok(fallback.includes("selected compiler's installed help"), fallback);
+assert.ok(fallback.includes('replace index.json (or the file selected by PUREBASIC_MCP_INDEX)'), fallback);
+assert.ok(fallback.includes('fetch the full text URL above') && !fallback.includes('build-online-index.mjs'), fallback);
 index.referenceText = [];
 writeFileSync(legacy, JSON.stringify(index));
 assert.ok(command('Language constructs', legacy).includes('Local text is unavailable'), 'invalid optional text map crashed lookup');

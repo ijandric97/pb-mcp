@@ -184,11 +184,10 @@ Procedure.s ValidateIntArg(Args.i, Key$, MinV.i, MaxV.i, *outVal.Integer)
   ProcedureReturn ""
 EndProcedure
 
-; invalid-args reply shape: NOT a JSON-RPC error - an isError text result:
-;   MCP error -32602: Input validation error: Invalid arguments for tool
-;   <name>: <issues joined "; ">
+; Invalid tool arguments are protocol errors; execution failures use isError.
 Procedure SendInvalidParams(IdValue.i, Tool$, Issues$)
-  SendTextResult(IdValue, "MCP error -32602: Input validation error: Invalid arguments for tool " + Tool$ + ": " + Issues$, #True)
+  If gRequestCancelled And RequestIdKey(IdValue) = gActiveRequestId$ : ProcedureReturn : EndIf
+  SendError(IdValue, -32602, "Invalid arguments for tool " + Tool$ + ": " + Issues$)
 EndProcedure
 
 ; ---------------------------------------------------------------------------

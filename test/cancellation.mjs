@@ -321,29 +321,31 @@ try {
 // Cancellation during the first /VERSION probe must not poison config state.
 // Release the fake compiler after cancellation, then pb_version must retry and
 // report the discovered version instead of retaining an empty cached value.
-const versionBase = join(scratch, 'version-probe');
-const versionServer = startServer({ PUREBASIC_HOME: fakeHome, PBMCP_FAKE_VERSION_WAIT: '1', PBMCP_FAKE_VERSION_BASE: versionBase });
-let versionPid;
-try {
-  versionServer.stdin.write(json(call('version-cancel', 'pb_check', { file: inputSource })));
-  await waitFor(versionServer, () => existsSync(versionBase + '-pid'), 'blocked version probe start');
-  versionPid = Number(readFileSync(versionBase + '-pid', 'utf8').trim());
-  versionServer.stdin.write(json(ping('version-ping')));
-  await writeFragmented(versionServer, json(cancelled('version-cancel')));
-  await waitFor(versionServer, () => versionServer.responses.some(r => r.id === 'version-ping'), 'version probe control polling', 2500);
-  const deadline = performance.now() + 3000;
-  while (alive(versionPid) && performance.now() < deadline) await sleep(10);
-  assert.equal(alive(versionPid), false, `cancelled version probe ${versionPid} survived`);
-  writeFileSync(versionBase + '-release', 'released');
-  versionServer.stdin.write(json(call('version-retry', 'pb_version', {})));
-  await waitFor(versionServer, () => versionServer.responses.some(r => r.id === 'version-retry'), 'version retry', 6000);
-  assert.equal(versionServer.responses.some(r => r.id === 'version-cancel'), false, 'cancelled first check emitted a result');
-  const retry = versionServer.responses.find(r => r.id === 'version-retry');
-  assert.equal(retry.result.isError, false, JSON.stringify(retry));
-  assert.match(retry.result.content[0].text, /PureBasic 6\.40/);
-} finally {
-  await closeServer(versionServer);
-  if (versionPid && alive(versionPid)) process.kill(versionPid, 'SIGKILL');
+for (const [name, args] of [['valid', { file: inputSource }], ['invalid', {}]]) {
+  const versionBase = join(scratch, 'version-probe-' + name);
+  const versionServer = startServer({ PUREBASIC_HOME: fakeHome, PBMCP_FAKE_VERSION_WAIT: '1', PBMCP_FAKE_VERSION_BASE: versionBase });
+  let versionPid;
+  try {
+    versionServer.stdin.write(json(call('version-cancel', 'pb_check', args)));
+    await waitFor(versionServer, () => existsSync(versionBase + '-pid'), 'blocked version probe start');
+    versionPid = Number(readFileSync(versionBase + '-pid', 'utf8').trim());
+    versionServer.stdin.write(json(ping('version-ping')));
+    await writeFragmented(versionServer, json(cancelled('version-cancel')));
+    await waitFor(versionServer, () => versionServer.responses.some(r => r.id === 'version-ping'), 'version probe control polling', 2500);
+    const deadline = performance.now() + 3000;
+    while (alive(versionPid) && performance.now() < deadline) await sleep(10);
+    assert.equal(alive(versionPid), false, `cancelled version probe ${versionPid} survived`);
+    writeFileSync(versionBase + '-release', 'released');
+    versionServer.stdin.write(json(call('version-retry', 'pb_version', {})));
+    await waitFor(versionServer, () => versionServer.responses.some(r => r.id === 'version-retry'), 'version retry', 6000);
+    assert.equal(versionServer.responses.some(r => r.id === 'version-cancel'), false, `cancelled ${name} check emitted a response`);
+    const retry = versionServer.responses.find(r => r.id === 'version-retry');
+    assert.equal(retry.result.isError, false, JSON.stringify(retry));
+    assert.match(retry.result.content[0].text, /PureBasic 6\.40/);
+  } finally {
+    await closeServer(versionServer);
+    if (versionPid && alive(versionPid)) process.kill(versionPid, 'SIGKILL');
+  }
 }
 
 console.log('cancellation tests passed (runtime/compiler trees, exact IDs and reuse, fragmented controls, ignored cancellations, queued/mixed calls, prompt batch pings and full-queue recovery)');

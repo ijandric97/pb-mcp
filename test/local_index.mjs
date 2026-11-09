@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:f
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeScratch } from './scratch.mjs';
-import { cachedIndexMatches, checkHelpVersion, findLocalHelp, helpHash, parserFingerprint } from '../tools/build-local-index.mjs';
+import { cachedIndexMatches, checkHelpVersion, findLocalHelp, helpHash, indexContentHash, parserFingerprint } from '../tools/build-local-index.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const scratch = makeScratch('local-index');
@@ -49,6 +49,7 @@ const fixture = { schemaVersion: 1, purebasicVersion: '6.41', source,
   commands: [{ name: 'Boundary', parameters: [{ name: 'value', description: 'input' }], syntax: ['Boundary(value)'] }],
   reference: [{ title: 'Language constructs', id: 'constructs', file: 'reference/constructs.html', summary: 'Language reference' }],
   referenceText: { 'reference/constructs.html': 'Local reference text' } };
+fixture.contentSha256 = indexContentHash(fixture);
 assert.equal(cachedIndexMatches(fixture, source, '6.41'), true);
 for (const changed of [null, { ...fixture, purebasicVersion: '6.40' }, { ...fixture, commands: [] },
   { ...fixture, commands: [{}] }, { ...fixture, commands: [{ name: ' ' }] },
@@ -57,7 +58,13 @@ for (const changed of [null, { ...fixture, purebasicVersion: '6.40' }, { ...fixt
   { ...fixture, reference: null }, { ...fixture, reference: [{}] },
   { ...fixture, reference: [{ title: 'Language constructs', summary: 42 }] },
   { ...fixture, referenceText: [] }, { ...fixture, referenceText: { 'reference/constructs.html': 42 } }]) {
+  if (changed) changed.contentSha256 = indexContentHash(changed);
   assert.ok(!cachedIndexMatches(changed, source, '6.41'), 'invalid cached index was reused');
+}
+for (const changed of [{ ...fixture, contentSha256: undefined }, { ...fixture, contentSha256: 'invalid' },
+  { ...fixture, commands: [{ ...fixture.commands[0], syntax: ['WrongSyntax()'] }] },
+  { ...fixture, reference: [] }, { ...fixture, referenceText: {} }]) {
+  assert.ok(!cachedIndexMatches(changed, source, '6.41'), 'changed or unsigned cached content was reused');
 }
 for (const field of ['path', 'sha256', 'compiler', 'compilerVersion', 'compilerSha256', 'parserSha256']) {
   assert.ok(!cachedIndexMatches(fixture, { ...source, [field]: 'changed' }, '6.41'), `${field} change did not invalidate cache`);
@@ -132,8 +139,19 @@ assert.equal(repairedShape.status, 0, repairedShape.stdout + repairedShape.stder
 assert.doesNotMatch(repairedShape.stdout, /unchanged/);
 assert.ok(JSON.parse(readFileSync(output, 'utf8')).commands.some(command => command.name === 'OpenWindow'),
   'malformed cached command entry was not regenerated');
+for (const changed of [{ ...index, commands: index.commands.slice(0, 1) }, { ...index, referenceText: {} },
+  { ...index, contentSha256: undefined }]) {
+  writeFileSync(output, JSON.stringify(changed));
+  const restored = build();
+  assert.equal(restored.status, 0, restored.stdout + restored.stderr);
+  assert.doesNotMatch(restored.stdout, /unchanged/);
+  const repaired = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(repaired.commands, index.commands, 'incomplete command coverage was not repaired');
+  assert.deepEqual(repaired.referenceText, index.referenceText, 'missing local reference text was not repaired');
+  assert.equal(cachedIndexMatches(repaired, index.source, version), true);
+}
 writeFileSync(output, JSON.stringify({ ...index, purebasicVersion: 'stale-version' }));
 const repaired = build();
 assert.equal(repaired.status, 0, repaired.stdout + repaired.stderr);
 assert.equal(JSON.parse(readFileSync(output, 'utf8')).purebasicVersion, version, 'stale cached index was not rebuilt');
-console.log(`local index tests passed (local help/version validation, content cache, failure preservation, installed compiler/help ${version})`);
+console.log(`local index tests passed (local help/version validation, content integrity/cache recovery, failure preservation, installed compiler/help ${version})`);

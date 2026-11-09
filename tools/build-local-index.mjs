@@ -57,6 +57,10 @@ export function helpHash(source) {
   return hash.digest('hex');
 }
 
+export function indexContentHash({ contentSha256, ...content }) {
+  return createHash('sha256').update(JSON.stringify(content)).digest('hex');
+}
+
 export function cachedIndexMatches(index, source, version) {
   const stringFields = (entry, fields) => fields.every(field => entry[field] === undefined || typeof entry[field] === 'string');
   const commandsValid = Array.isArray(index?.commands) && index.commands.length > 0 && index.commands.every(entry =>
@@ -73,7 +77,8 @@ export function cachedIndexMatches(index, source, version) {
     && Object.values(index.referenceText).every(value => typeof value === 'string');
   return index?.schemaVersion === 1 && index.purebasicVersion === version
     && JSON.stringify(index.source) === JSON.stringify(source)
-    && commandsValid && referenceValid && textValid;
+    && commandsValid && referenceValid && textValid
+    && typeof index.contentSha256 === 'string' && index.contentSha256 === indexContentHash(index);
 }
 
 export function parserFingerprint(projectRoot = root) {
@@ -148,10 +153,11 @@ export function buildLocalIndex(compiler, outFile) {
     const output = join(work, 'index.json');
     console.log(run(process.execPath, [join(root, 'tools', 'build-online-index.mjs'), docs, '--out', output,
       '--pb-version', version, '--source-json', JSON.stringify(source), '--pbmcp', scanner]).trim());
-    const bytes = readFileSync(output);
-    if (!cachedIndexMatches(JSON.parse(bytes), source, version)) throw new Error('Generated local index failed validation.');
+    const index = JSON.parse(readFileSync(output, 'utf8'));
+    index.contentSha256 = indexContentHash(index);
+    if (!cachedIndexMatches(index, source, version)) throw new Error('Generated local index failed validation.');
     mkdirSync(dirname(outFile), { recursive: true });
-    writeFileSync(staged, bytes, { flag: 'wx' });
+    writeFileSync(staged, JSON.stringify(index), { flag: 'wx' });
     renameSync(staged, outFile);
   } finally {
     rmSync(staged, { force: true });

@@ -96,6 +96,13 @@
 
 ### Fixed
 
+- Local docs caches verify a content digest before reuse, rebuilding indexes
+  with missing commands or reference text even when their JSON shape is valid.
+  Older caches without a digest rebuild once; runtime index compatibility remains.
+- Invalid tool arguments now return JSON-RPC error `-32602` instead of putting
+  the code inside a tool-error text result. Cancelled calls remain silent.
+- Legacy reference-index recovery points to the native source builds or replacing
+  the selected packaged index, while retaining the official full-text URL.
 - Malformed command/reference entries or reference text invalidate the local
   docs cache, so rebuilding repairs it instead of embedding an unusable index.
 - Clarified that command output caps can cut syntax or parameters and that

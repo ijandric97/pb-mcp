@@ -417,7 +417,7 @@ console.log("\n[3] docs tools (pb_docs_search + pb_command)");
     ["window", { library: "Window" }], // 4: library filter
     ["window", { limit: 3 }],        // 5: limit
     [null, {}],                      // 6: absent query -> validation
-    ["x", { limit: 0 }],             // 7: min-length validation
+    ["x", { limit: 0 }],             // 7: min-limit validation
     ["WINDOW", {}],                  // 8: case-folds to the same top hit as 0
     ["!!!", {}],                     // 9: tokenize -> empty -> no-match
     ["camera", {}],                  // 10: camera leads
@@ -429,7 +429,7 @@ console.log("\n[3] docs tools (pb_docs_search + pb_command)");
   check("[3] search session exits 0, stderr silent", ps.status === 0 && ps.stderr === "", ps.stderr);
   const sOut = (i) => text(ps.byId.get(i + 2));
   const sMsg = (i) => ps.byId.get(i + 2);
-  const sErr = (i) => sMsg(i)?.result?.isError === true;
+  const sErr = (i) => sMsg(i)?.error?.code === -32602;
   const hitLines = (i) => sOut(i).split("\n").filter((l) => /^\d+\. /.test(l));
 
   check("search 'window': top hit is a window command", /^1\. \S*window/i.test(hitLines(0)[0] ?? ""), sOut(0).slice(0, 160));
@@ -447,10 +447,10 @@ console.log("\n[3] docs tools (pb_docs_search + pb_command)");
     sOut(5).split("\n").length === 4 && /^3\. /.test(sOut(5).split("\n")[2]) && sOut(5).split("\n")[3].startsWith("Use pb_command"),
     JSON.stringify(sOut(5).split("\n")));
   check("absent query -> validation 'Required at query'",
-    sOut(6) === "MCP error -32602: Input validation error: Invalid arguments for tool pb_docs_search: Required at query" &&
-    sErr(6), sOut(6));
-  check("limit=0 -> min-length validation message",
-    sOut(7).endsWith("Number must be greater than or equal to 1 at limit"), sOut(7));
+    sMsg(6)?.error?.message === "Invalid arguments for tool pb_docs_search: Required at query" &&
+    sErr(6) && !sMsg(6)?.result, JSON.stringify(sMsg(6)));
+  check("limit=0 -> min-limit protocol error",
+    sErr(7) && sMsg(7)?.error?.message.endsWith("Number must be greater than or equal to 1 at limit"), JSON.stringify(sMsg(7)));
   check("WINDOW case-folds to the same top hit as 'window'",
     hitLines(8).length > 0 && hitLines(8)[0] === hitLines(0)[0], sOut(8).slice(0, 160));
   check("!!!: no-match message",
@@ -459,11 +459,14 @@ console.log("\n[3] docs tools (pb_docs_search + pb_command)");
   check("thread create mutex: hits returned", hitLines(11).length > 0 && !sErr(11), sOut(11).slice(0, 120));
   check("limit 25: at most 25 hit lines", hitLines(12).length <= 25 && hitLines(12).length > 1, String(hitLines(12).length));
   check("limit 26: rejected (max 25)",
-    sErr(13) && /^MCP error -32602: Input validation error: .* at limit/.test(sOut(13)), sOut(13).slice(0, 160));
+    sErr(13) && sMsg(13)?.error?.message === "Invalid arguments for tool pb_docs_search: Number must be less than or equal to 25 at limit",
+    JSON.stringify(sMsg(13)));
 
   // pb_command argument validation
   const pv = runPb(() => [initializeRequest(), call("pb_command", {})]);
-  check("absent name -> validation 'Required at name'", text(pv.byId.get(2)).endsWith("Required at name"), text(pv.byId.get(2)));
+  const missingName = pv.byId.get(2);
+  check("absent name -> protocol error 'Required at name'", missingName?.error?.code === -32602 &&
+    missingName?.error?.message === "Invalid arguments for tool pb_command: Required at name", JSON.stringify(missingName));
 }
 
 // ===========================================================================
@@ -512,8 +515,9 @@ console.log("\n[4] pb_check");
 
   check("missing file: 'File not found: <resolved-with-backslashes>'",
     t(8) === "File not found: " + join(FIX, "nope.pb") && r.byId.get(8)?.result?.isError === true, t(8));
-  check("numeric file arg -> invalid type message",
-    t(9) === "MCP error -32602: Input validation error: Invalid arguments for tool pb_check: Expected string, received number at file", t(9));
+  check("numeric file arg -> invalid type protocol error",
+    r.byId.get(9)?.error?.code === -32602 &&
+    r.byId.get(9)?.error?.message === "Invalid arguments for tool pb_check: Expected string, received number at file", JSON.stringify(r.byId.get(9)));
 
   // Best practices: always-on lint + new proc-scope hints (0.3.3)
   check("bp.pb: OK + all three best-practice notes",

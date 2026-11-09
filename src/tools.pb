@@ -234,7 +234,8 @@ Procedure.s FormatReferenceEntry(Entry.i)
   If text$ <> ""
     out$ + Chr(10) + Chr(10) + text$
   Else
-    out$ + Chr(10) + "Local text is unavailable in this index. Rebuild it with tools/build-online-index.mjs or fetch the URL."
+    out$ + Chr(10) + "Local text is unavailable in this index. From a source checkout, run build.cmd (Windows) or bash build.sh (Linux) to index the selected compiler's installed help and rebuild. " +
+      "For a packaged server, replace index.json (or the file selected by PUREBASIC_MCP_INDEX) with a current index. You can also fetch the full text URL above."
     If summary$ <> "" And summary$ <> title$
       out$ + Chr(10) + Chr(10) + "Summary: " + summary$
     EndIf
