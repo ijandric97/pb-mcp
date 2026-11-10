@@ -260,6 +260,7 @@ writeFileSync(fakeCompilerSource, '\uFEFFEnableExplicit\nIf OpenConsole()\n' +
   '  Define log.s = GetEnvironmentVariable("PBMCP_TEST_ATTEMPTS"), f.i, previous.i\n' +
   '  If log <> ""\n    f = OpenFile(#PB_Any, log, #PB_File_Append)\n    If f = 0 : End 3 : EndIf\n' +
   '    previous = Lof(f)\n    WriteStringN(f, "compile", #PB_UTF8)\n    CloseFile(f)\n  EndIf\n' +
+  '  Delay(Val(GetEnvironmentVariable("PBMCP_TEST_COMPILE_DELAY")))\n' +
   '  Select GetEnvironmentVariable("PBMCP_TEST_FAILURE")\n' +
   '    Case "linker"\n      PrintN("Error: Linker")\n      PrintN("error: undefined symbol: PbmcpMissingLinkSymbol")\n' +
   '    Case "assembler"\n      PrintN("Error: Assembler")\n      PrintN("error: invalid instruction")\n' +
@@ -292,6 +293,10 @@ for (const tool of ['pb_check', 'pb_run']) {
     assert.equal(readFileSync(attempts, 'utf8').trim().split(/\r?\n/).length, count, tool + ': ' + mode + ' retry count');
   }
 }
+const retried = rpc([['pb_run', { file: hello }]], { PUREBASIC_HOME: fakeHome,
+  PBMCP_TEST_FAILURE: 'write', PBMCP_TEST_COMPILE_DELAY: '200' });
+const retryDuration = Number(/compile took (\d+) ms/.exec(text(retried.responses[0]))?.[1]);
+assert.ok(retryDuration >= 650 && retryDuration <= retried.ms, 'retry duration omitted an attempt or the backoff: ' + retryDuration);
 writeFileSync(attempts, '');
 ok(invoke('pb_check', { file: hello }, { PUREBASIC_HOME: fakeHome,
   PBMCP_TEST_ATTEMPTS: attempts, PBMCP_TEST_FAILURE: 'recover' }));
@@ -369,6 +374,10 @@ Define sourceText.String
 ${sourceChecks.join('\n')}
 sourceText\\s = "stale"
 If ReadCheckSource("${scratch}/missing-source.pb", @sourceText) <> -1 Or sourceText\\s <> "" : End 23 : EndIf
+gRequestCancelled = #True
+sourceText\\s = "stale"
+If ReadCheckSource("${large}", @sourceText) <> -1 Or sourceText\\s <> "" : End 26 : EndIf
+gRequestCancelled = #False
 Define diagnosticText.s = LSet("", 1024 * 1024, Chr(10)), parseStarted.i = ElapsedMilliseconds()
 NewList parsedErrors.DiagT()
 NewList parsedWarnings.DiagT()

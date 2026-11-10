@@ -914,6 +914,11 @@ Procedure.i ProjectCheckPathComponents(InputPath$, *stage.ProjectStageT)
 EndProcedure
 
 Procedure.i ProjectTimeAvailable(*stage.ProjectStageT, Path$)
+  PollControlMessages()
+  If gRequestCancelled
+    *stage\error = "project staging cancelled"
+    ProcedureReturn #False
+  EndIf
   If ElapsedMilliseconds() - *stage\started > #PROJECT_STAGE_TIMEOUT_MS
     *stage\error = "staging exceeded the 15-second time limit at " + Path$ + "; reduce the selected projectRoot"
     ProcedureReturn #False
@@ -927,6 +932,13 @@ Procedure.i ProjectCopyRegularFile(Source$, Destination$, ExpectedSize.q, *stage
     If *stage\error = "" : *stage\error = "entry changed or is not a regular file: " + Source$ : EndIf
     ProcedureReturn #False
   EndIf
+  CompilerIf #PB_Compiler_OS = #PB_OS_Linux
+    Protected attributes.i = GetFileAttributes(Source$)
+    If attributes = -1
+      *stage\error = "cannot read project file permissions: " + Source$
+      ProcedureReturn #False
+    EndIf
+  CompilerEndIf
   Protected input.i = ReadFile(#PB_Any, Source$)
   If input = 0
     *stage\error = "cannot open project file for reading: " + Source$
@@ -968,6 +980,11 @@ Procedure.i ProjectCopyRegularFile(Source$, Destination$, ExpectedSize.q, *stage
   If *stage\error = "" And (copied <> ExpectedSize Or FileSize(Source$) <> ExpectedSize)
     *stage\error = "source file changed while staging: " + Source$
   EndIf
+  CompilerIf #PB_Compiler_OS = #PB_OS_Linux
+    If *stage\error = "" And SetFileAttributes(Destination$, attributes) = 0
+      *stage\error = "cannot preserve staged file permissions: " + Destination$
+    EndIf
+  CompilerEndIf
   If *stage\error <> "" : ProcedureReturn #False : EndIf
   ProcedureReturn #True
 EndProcedure
@@ -1178,7 +1195,14 @@ Procedure.i ReadCheckSource(File$, *Source.String)
   Protected *buffer = AllocateMemory(#MAX_LINT_SOURCE_BYTES + 65536)
   If *buffer = 0 : CloseFile(f) : ProcedureReturn -1 : EndIf
   Protected expected.i = Lof(f), total.i, kept.i, bytes.i, i.i, c.a, last.a, lines.i
+  Protected started.i = ElapsedMilliseconds()
   Repeat
+    PollControlMessages()
+    If gRequestCancelled Or ElapsedMilliseconds() - started >= #PROJECT_STAGE_TIMEOUT_MS
+      CloseFile(f)
+      FreeMemory(*buffer)
+      ProcedureReturn -1
+    EndIf
     bytes = ReadData(f, *buffer + kept, 65536)
     For i = 0 To bytes - 1
       c = PeekA(*buffer + kept + i)
@@ -1233,6 +1257,7 @@ EndProcedure
 ; constants (#SW_* in config.pb): Windows "/CHECK" "/CONSOLE" "/EXE",
 ; Linux "--check" "--console" "--output" - "/"-switches do not exist there.
 Procedure CompilerStepWithRetry(CompilerExe$, Flag$, SrcFile$, ExeOut$, WorkingDir$, *r.RunResT)
+  Protected started.i = ElapsedMilliseconds()
   Protected timeoutMs.i = #CHECK_TIMEOUT_MS
   If Flag$ = #SW_CONSOLE$ : timeoutMs = #COMPILE_TIMEOUT_MS : EndIf
   Protected params$ = Flag$
@@ -1243,6 +1268,7 @@ Procedure CompilerStepWithRetry(CompilerExe$, Flag$, SrcFile$, ExeOut$, WorkingD
     Delay(250)
     RunProcessCapture(CompilerExe$, params$, WorkingDir$, timeoutMs, *r)
   EndIf
+  *r\durationMs = ElapsedMilliseconds() - started
 EndProcedure
 
 ; ---------------------------------------------------------------------------
@@ -1555,20 +1581,21 @@ Procedure RunCheck(CompilerExe$, AbsFile$, ProjectRoot$, *c.CheckResT)
   *c\sourceText = ""
   *c\stagingError = ""
 
-  Protected source.String
-  *c\lineCount = ReadCheckSource(AbsFile$, @source)
-  If *c\lineCount < 0
-    *c\rawTail = "cannot read source file: " + AbsFile$
-    ProcedureReturn
-  EndIf
-  *c\sourceText = source\s
-
   Protected copy.TempCopyT
   MakeTempCopy(AbsFile$, ProjectRoot$, @copy)
   If copy\ok = #False
     *c\stagingError = copy\error
     ProcedureReturn
   EndIf
+
+  Protected source.String
+  *c\lineCount = ReadCheckSource(copy\file, @source)
+  If *c\lineCount < 0
+    CleanupTempDir(copy\dir)
+    *c\rawTail = "cannot read staged source file within the 15-second limit: " + AbsFile$
+    ProcedureReturn
+  EndIf
+  *c\sourceText = source\s
 
   Protected proc.RunResT
   CompilerStepWithRetry(CompilerExe$, #SW_CHECK$, copy\file, PathJoin(copy\dir, "check" + #ExeSuffix$), GetPathPart(copy\file), @proc)

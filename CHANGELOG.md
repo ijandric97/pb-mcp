@@ -4,6 +4,8 @@
 
 ### Added
 
+- Local regressions use the real compiler for numeric revisions and overlapping
+  builds, check matching package indexes, and verify complete retry durations.
 - Acceptance-suite startup reports the selected executable and its source revision.
 - Regressions for invalid docs arguments with unavailable indexes, relocated
   parser-cache inputs, and detached Linux stdout/stderr writers after exit or timeout.
@@ -63,6 +65,13 @@
 
 ### Changed
 
+- Compiler checks validate and stage the project before reading source text;
+  staged source reads poll cancellation and have a 15-second deadline.
+- Linux project copies retain file permissions, including executable helpers.
+- HTTP and project regressions use private temporary roots so unrelated server
+  workspaces cannot trigger false cleanup failures.
+- Distribution scripts reject overlapping runs with a shared publish lock and
+  report how to handle a lock retained after an uncatchable interruption.
 - Final process-output reads stop at the remaining capture capacity plus one
   byte for truncation detection, even when detached descendants keep writing.
 - Documentation tools validate arguments before checking index availability.
@@ -104,6 +113,19 @@
 
 ### Fixed
 
+- HTTP validates raw UTF-8 and JSON limits before parsing or accepting
+  notifications/responses, and honors valid positive `Accept` quality values.
+- Project staging processes pings and cancellation during validation and copying,
+  cleaning partial workspaces when cancelled.
+- Local acceptance now includes HTTP and project suites. HTTP tests authenticate
+  the disconnect case, wait for actual program entry, and allocate supported ports.
+  Installed-help cache tests retain guard coverage with two real builds and
+  subprocess-aware deadlines; HTTP documentation assertions use a fixed fixture.
+- Digits-only Git revisions now build correctly through the shared native build
+  helper; version reports prefix Git revisions with `g`.
+- Concurrent builds embed their own validated index snapshots. Packaging copies
+  that same snapshot instead of rereading a cache another build can replace.
+- Compiler retry durations include both attempts and the retry delay.
 - Local docs caches verify a content digest before reuse, rebuilding indexes
   with missing commands or reference text even when their JSON shape is valid.
   Older caches without a digest rebuild once; runtime index compatibility remains.

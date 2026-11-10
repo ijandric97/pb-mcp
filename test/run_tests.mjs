@@ -911,7 +911,7 @@ try {
 }
 
 console.log("\n[12] compiler workflow, stdio lifecycle, and crawler regressions");
-for (const test of ["protocol.mjs", "protocol_isolation.mjs", "compiler.mjs", "processes.mjs", "cancellation.mjs", "metrics.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "local_index.mjs", "encoding.mjs", "build.mjs", "package_docs_test.mjs", "packaging.mjs"]) {
+for (const test of ["protocol.mjs", "protocol_isolation.mjs", "compiler.mjs", "processes.mjs", "cancellation.mjs", "metrics.mjs", "dribble_test.mjs", "crawler.mjs", "index.mjs", "encoding.mjs", "build.mjs", "build_isolation.mjs", "package_docs_test.mjs", "packaging.mjs"]) {
   try {
     console.log(execFileSync(process.execPath, [join(testDir, test)], {
       cwd: root, env: { ...pinEnv(), PBMCP_EXE: exe }, encoding: "utf8", timeout: 60000, windowsHide: true,
@@ -920,6 +920,30 @@ for (const test of ["protocol.mjs", "protocol_isolation.mjs", "compiler.mjs", "p
   } catch (error) {
     check(test + " passes", false, String(error.stdout || "") + String(error.stderr || error));
   }
+}
+
+try {
+  console.log(execFileSync(process.execPath, [join(testDir, "local_index.mjs")], {
+    // Two bounded installed-help builds, warm-cache checks, and scanner parity.
+    cwd: root, env: { ...pinEnv(), PBMCP_EXE: exe }, encoding: "utf8", timeout: 960000, windowsHide: true,
+  }).trim());
+  check("local_index.mjs passes", true);
+} catch (error) {
+  check("local_index.mjs passes", false, String(error.stdout || "") + String(error.stderr || error));
+}
+
+try {
+  console.log(execFileSync(process.execPath, ["--test", "--test-concurrency=1",
+    join(testDir, "http.test.mjs"), join(testDir, "project.test.mjs")], {
+    cwd: root,
+    env: { ...pinEnv(), PBMCP_EXE: exe },
+    encoding: "utf8",
+    timeout: 300000,
+    windowsHide: true,
+  }).trim());
+  check("HTTP and project tests pass", true);
+} catch (error) {
+  check("HTTP and project tests pass", false, String(error.stdout || "") + String(error.stderr || error));
 }
 
 // ---------------------------------------------------------------------------

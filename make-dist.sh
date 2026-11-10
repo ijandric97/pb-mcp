@@ -24,9 +24,13 @@ cd "$(dirname "$0")" || exit 1
 
 STAGE=""
 BACKUP=""
+LOCK=".dist-publish.lock"
+LOCK_OWNED=""
+# shortcut: a hard kill leaves this lock; remove it only after confirming no publisher is active.
 cleanup() {
   restore
   if [ -n "$STAGE" ] && [ -d "$STAGE" ]; then rm -rf -- "$STAGE"; fi
+  if [ -n "$LOCK_OWNED" ]; then rmdir -- "$LOCK" 2>/dev/null || echo "make-dist: could not remove lock $LOCK"; fi
 }
 restore() {
   if [ -n "$BACKUP" ] && [ -e "$BACKUP" ] && [ ! -e dist ] && [ ! -L dist ]; then
@@ -39,6 +43,12 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+if ! mkdir -- "$LOCK" 2>/dev/null; then
+  echo "make-dist: publish lock exists at $LOCK (another publish may be running, or remove it after confirming no publisher is active)"
+  exit 1
+fi
+LOCK_OWNED=1
+
 echo "make-dist: creating staged dist layout"
 STAGE=$(mktemp -d "$PWD/.dist-stage.XXXXXX") || fail
 BACKUP="$STAGE.old"
@@ -46,16 +56,17 @@ mkdir -p "$STAGE/skills/purebasic" || fail
 
 echo "make-dist: building pbmcp"
 export PBMCP_OUT="$STAGE/pbmcp"
+export PBMCP_INDEX_OUT="$STAGE/index.json"
 if ! bash build.sh; then
   echo "make-dist: build FAILED"
   fail
 fi
+unset PBMCP_INDEX_OUT
 
 echo "make-dist: copying docs + skill"
 cp README.md "$STAGE/" || fail
 cp INSTALL.md "$STAGE/" || fail
 cp LICENSE "$STAGE/" || fail
-cp src/pbdocs-index.json "$STAGE/index.json" || fail
 echo "make-dist: copying complete skill tree (SKILL.md + references/)"
 cp -R skills/purebasic/. "$STAGE/skills/purebasic/" || fail
 

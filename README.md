@@ -73,6 +73,9 @@ Parser fingerprints use relative filenames, so moving the checkout alone does
 not invalidate the cache. Existing caches rebuild once for this change.
 The previous index remains intact if generation fails. Changing installations
 or updating the help automatically invalidates the cache.
+Each build embeds a private snapshot returned by its index generation, so
+overlapping builds cannot embed each other's documentation. Use distinct
+`PBMCP_OUT` paths when building concurrently.
 
     pbmcp.exe version          # compiler and docs versions should match
     build.cmd test            # build, then run the full local acceptance suite
@@ -117,7 +120,8 @@ interpretation; the root only selects what gets staged:
   stages the whole tree, so `../common.pbi` resolves like a native build.
 - **What is copied** — the complete tree (sources, `.pbi`, DLLs/shared
   libraries, libraries, resources, data, empty directories), preserving
-  relative paths. Only VCS metadata (`.git`, `.hg`, `.svn`) is excluded.
+  relative paths and Linux file permissions, including executable helpers.
+  Only VCS metadata (`.git`, `.hg`, `.svn`) is excluded.
 - **Limits** — 10,000 entries, 256 MiB of regular-file bytes, nesting depth
   64, 15 s staging time. Exceeding one returns an actionable error; narrow
   the root.
@@ -170,6 +174,10 @@ interpretation; the root only selects what gets staged:
   Network receive/send bounds are 10 seconds, not an execution deadline.
 - **Bounded framing** — 16 connections, 16 KiB headers, 1 MiB body,
   keepalive/chunked/HTTP/2 unsupported (rejected without dispatch).
+- **Input validation** — HTTP applies the same strict UTF-8, NUL, Unicode,
+  nesting, and integer checks as stdio before handling requests, notifications,
+  or responses. Both required `Accept` media types must have a positive valid
+  quality value; `q=0` excludes that entry.
 - **Docs-index preload** — `PBMCP_PRELOAD=1` loads the index synchronously
   at startup; the default loads it on the first documentation call.
 
@@ -183,13 +191,15 @@ run `./build.cmd` or `bash build.sh`, then run the relevant standalone tests:
 | Change | Local test |
 | ------ | ---------- |
 | MCP requests and framing | `node test/protocol.mjs` |
+| HTTP protocol, authentication, or framing | `node --test test/http.test.mjs` |
+| Project staging or runtime resources | `node --test test/project.test.mjs` |
 | Compiler diagnostics, retries, arguments, or output capture | `node test/compiler.mjs` |
 | Process cleanup or cancellation | `node test/processes.mjs` and `node test/cancellation.mjs` |
 | Documentation scanner, index, or lookup | `node test/index.mjs` |
 | Installed-help indexing or its cache | `node test/local_index.mjs` |
 | Metrics | `node test/metrics.mjs` |
 | Online crawler | `node test/crawler.mjs` |
-| Build or packaging scripts | `node test/build.mjs`, `node test/package_docs_test.mjs`, and `node test/packaging.mjs` |
+| Build or packaging scripts | `node test/build.mjs`, `node test/build_isolation.mjs`, `node test/package_docs_test.mjs`, and `node test/packaging.mjs` |
 | Source encoding gate | `node test/encoding.mjs` |
 
 Crawler-only edits need no server rebuild; that test uses a local HTTP fixture.
@@ -205,6 +215,10 @@ Linux before committing changes. Each command builds with the installed
 compiler and matching help, then runs the full acceptance suite against that
 binary. Platform-specific branches need a native test run on each supported OS.
 The distribution scripts also run this suite before replacing the local bundle.
+The gate runs HTTP and project tests sequentially against the selected binary
+and a deterministic documentation fixture. Installed-help checks use two real
+index builds plus fixture-based cache validation, with a separate deadline
+that covers their compiler and extraction subprocesses.
 Test runs use separate temporary directories so overlapping local checks do not
 overwrite each other's fixtures or session files.
 
@@ -215,6 +229,8 @@ overwrite each other's fixtures or session files.
 Builds the binary and matching installed-help index in a sibling staging
 directory (via the `PBMCP_OUT` override), assembles the bundle, and runs the full
 local acceptance suite against the staged binary before replacing `dist/`.
+The build writes its matching index directly to the staging directory through
+`PBMCP_INDEX_OUT`; packaging does not reread the shared documentation cache.
 Before the suite, a separate docs smoke test clears `PUREBASIC_MCP_INDEX`,
 requires the staged `index.json`, checks compiler/help versions match, and
 looks up `OpenWindow` with its syntax. Run it independently with
@@ -234,6 +250,12 @@ to allow cleanup of the previous executable; retained files are reported.
 Catchable interruptions restore the previous bundle on Linux. On Windows,
 rerunning `make-dist.cmd` recovers a retained backup if an interruption left
 `dist/` missing.
+
+Both packaging scripts acquire `.dist-publish.lock` before recovery or building
+and reject overlapping runs. Normal success, failure, and catchable Linux
+interruptions release the lock. A hard termination can leave it behind; remove
+the empty lock directory only after confirming no packaging process is active,
+then rerun the packaging command.
 
 ## Companion skill
 
@@ -274,11 +296,15 @@ deferred input limit reached; retry later"); overflow notifications are discarde
 Pings and cancellation remain responsive when the queue is full. An overflow
 batch retains its response array: ordinary requests receive the busy error,
 while its pings and cancellation notifications are handled immediately.
+Project validation and copy loops also poll for pings and cancellation; a
+cancelled staging operation discards its partial workspace before returning.
 
 Both compiler tools show warnings without treating them as errors. Warning
 sections are bounded to 40 entries and 4,000 characters. `pb_check` counts source
 lines in fixed-size chunks and retains text for hints and best-practice notes
 only for files up to 512 KiB; larger files still receive compiler diagnostics.
+It reads the validated staged copy, polls for cancellation between chunks, and
+limits this source-reading phase to 15 seconds.
 
 ## Client configuration
 
@@ -326,8 +352,10 @@ shape under `"mcpServers"`. On Linux the command is e.g.
     pbmcp.exe test <file>                          replay a golden .jsonl session (test runner)
     pbmcp.exe http --port 6817 --auth-file <path>  authenticated loopback HTTP (see [HTTP transport](#http-transport))
 
-Source builds include the short Git revision in every version report. The
-`-dirty` suffix includes tracked changes made while generating the embedded
+Source builds include the short Git revision prefixed with `g` (for example,
+`g9405256`) in every version report. The prefix keeps numeric hashes valid as
+PureBasic string constants. The `-dirty` suffix includes tracked changes made
+while generating the embedded
 docs index; builds without Git metadata report `unknown`.
 
 Protocol: MCP over stdio — JSON-RPC 2.0, newline-framed UTF-8,
@@ -501,6 +529,7 @@ Set `PUREBASIC_HOME` to the installation to test.
     tools/fetch-online-docs.mjs   mirror the official online docs
     tools/build-online-index.mjs  docs index + shared reference text from a docs tree
     tools/build-local-index.mjs   matching installed-help index + content cache
+    tools/build.mjs       shared native build, private embedded/package index snapshot
     test/run_tests.mjs     full local acceptance suite; creates isolated JSONL sessions
     test/fixtures/        compiler sources and deterministic docs index
     test/fixtures_html_scan/   HTML parser inputs and JSON goldens

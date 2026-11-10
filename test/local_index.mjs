@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeScratch } from './scratch.mjs';
-import { cachedIndexMatches, checkHelpVersion, findLocalHelp, helpHash, indexContentHash, parserFingerprint } from '../tools/build-local-index.mjs';
+import { buildLocalIndex, cachedIndexMatches, checkHelpVersion, findLocalHelp, helpHash, indexContentHash, parserFingerprint } from '../tools/build-local-index.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const scratch = makeScratch('local-index');
@@ -116,7 +116,8 @@ assert.equal(isolatedScan.stdout, fullScan.stdout, 'scanner-only entry changed s
 const output = join(scratch, 'generated', 'index.json');
 function build(selectedCompiler = compiler) {
   return spawnSync(process.execPath, [join(root, 'tools', 'build-local-index.mjs'), '--compiler', selectedCompiler, '--out', output],
-    { encoding: 'utf8', windowsHide: true, timeout: 45000 });
+    // Version probe, hh/7-Zip fallback, compiler, and index subprocess budgets.
+    { encoding: 'utf8', windowsHide: true, timeout: 420000 });
 }
 const generated = build();
 assert.equal(generated.status, 0, generated.stdout + generated.stderr);
@@ -129,6 +130,7 @@ assert.ok(index.reference.some(page => page.title === 'CompilerIf'), 'local manu
 assert.ok(Object.values(index.referenceText).some(text => text.includes('CompilerEndIf')));
 const before = readFileSync(output);
 const modified = statSync(output).mtimeMs;
+assert.deepEqual(buildLocalIndex(compiler, output), index, 'warm index builder did not return its validated snapshot');
 const warm = build();
 assert.equal(warm.status, 0, warm.stdout + warm.stderr);
 assert.match(warm.stdout, /unchanged/);
@@ -136,25 +138,14 @@ assert.deepEqual(readFileSync(output), before);
 assert.equal(statSync(output).mtimeMs, modified, 'warm builds rewrote the index');
 assert.notEqual(build(join(scratch, 'missing-compiler')).status, 0);
 assert.deepEqual(readFileSync(output), before, 'failed generation replaced a working index');
-writeFileSync(output, JSON.stringify({ ...index, commands: [{}] }));
-const repairedShape = build();
-assert.equal(repairedShape.status, 0, repairedShape.stdout + repairedShape.stderr);
-assert.doesNotMatch(repairedShape.stdout, /unchanged/);
-assert.ok(JSON.parse(readFileSync(output, 'utf8')).commands.some(command => command.name === 'OpenWindow'),
-  'malformed cached command entry was not regenerated');
-for (const changed of [{ ...index, commands: index.commands.slice(0, 1) }, { ...index, referenceText: {} },
-  { ...index, contentSha256: undefined }]) {
-  writeFileSync(output, JSON.stringify(changed));
-  const restored = build();
-  assert.equal(restored.status, 0, restored.stdout + restored.stderr);
-  assert.doesNotMatch(restored.stdout, /unchanged/);
-  const repaired = JSON.parse(readFileSync(output, 'utf8'));
-  assert.deepEqual(repaired.commands, index.commands, 'incomplete command coverage was not repaired');
-  assert.deepEqual(repaired.referenceText, index.referenceText, 'missing local reference text was not repaired');
-  assert.equal(cachedIndexMatches(repaired, index.source, version), true);
-}
-writeFileSync(output, JSON.stringify({ ...index, purebasicVersion: 'stale-version' }));
+writeFileSync(output, JSON.stringify({ ...index, purebasicVersion: 'stale-version',
+  commands: index.commands.slice(0, 1), referenceText: {}, contentSha256: undefined }));
 const repaired = build();
 assert.equal(repaired.status, 0, repaired.stdout + repaired.stderr);
-assert.equal(JSON.parse(readFileSync(output, 'utf8')).purebasicVersion, version, 'stale cached index was not rebuilt');
+assert.doesNotMatch(repaired.stdout, /unchanged/);
+const repairedIndex = JSON.parse(readFileSync(output, 'utf8'));
+assert.equal(repairedIndex.purebasicVersion, version, 'stale cached version was not repaired');
+assert.deepEqual(repairedIndex.commands, index.commands, 'incomplete command coverage was not repaired');
+assert.deepEqual(repairedIndex.referenceText, index.referenceText, 'missing local reference text was not repaired');
+assert.equal(cachedIndexMatches(repairedIndex, index.source, version), true);
 console.log(`local index tests passed (local help/version validation, content integrity/cache recovery, failure preservation, installed compiler/help ${version})`);

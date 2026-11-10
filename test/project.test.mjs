@@ -7,9 +7,12 @@ import {
   truncateSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, parse } from "node:path";
+import { basename, dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
+import { makeScratch } from "./scratch.mjs";
 
+const inheritedTemp = tmpdir();
+const suiteScratch = makeScratch("project");
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const exe = process.env.PBMCP_EXE || join(repo, `pbmcp${process.platform === "win32" ? ".exe" : ""}`);
 const env = {
@@ -21,7 +24,7 @@ const tempDirs = () => {
   catch { return []; }
 };
 
-function scratch(prefix) { return mkdtempSync(join(tmpdir(), prefix)); }
+function scratch(prefix) { return mkdtempSync(join(suiteScratch, prefix)); }
 function put(root, path, content) {
   const full = join(root, path);
   mkdirSync(dirname(full), { recursive: true });
@@ -50,6 +53,12 @@ function assertNoOwnedTemps(before, message = "owned pbmcp-* workspaces were cle
   const leftovers = tempDirs().filter((name) => !before.includes(name));
   assert.deepEqual(leftovers, [], `${message}: ${leftovers.join(", ")}`);
 }
+
+test("project-staging: cleanup checks are scoped to the suite temp root", { concurrency: false }, () => {
+  const unrelated = mkdtempSync(join(inheritedTemp, "pbmcp-unrelated-"));
+  try { assert.equal(tempDirs().includes(basename(unrelated)), false); }
+  finally { rmSync(unrelated, { recursive: true, force: true }); }
+});
 
 test("project-staging: sibling, nested, conditional includes and binary data under Unicode paths", { concurrency: false }, () => {
   const root = scratch("pb-project- ");
@@ -114,6 +123,7 @@ test("project-safety: invalid roots, entry types and separator-boundary escapes 
     }
     const directoryEntry = check(project);
     assert.equal(isToolError(directoryEntry), true, resultText(directoryEntry));
+    assert.match(resultText(directoryEntry), /entry must be a regular file/);
     const escape = check(outside, { projectRoot: project });
     assert.equal(isToolError(escape), true, resultText(escape));
     assertNoOwnedTemps(before);
@@ -140,6 +150,11 @@ test("project-safety: entry-count, byte and depth limits fail without partial wo
       const result = check(join(projectRoot, "main.pb"), { projectRoot });
       assert.equal(isToolError(result), true, `accepted over-limit project ${projectRoot}: ${resultText(result)}`);
     }
+    rmSync(oversized);
+    truncateSync(join(big, "main.pb"), 256 * 1024 * 1024 + 1);
+    const oversizedEntry = check(join(big, "main.pb"));
+    assert.equal(isToolError(oversizedEntry), true, resultText(oversizedEntry));
+    assert.match(resultText(oversizedEntry), /256 MiB regular-file limit/);
     assertNoOwnedTemps(before, "limit failures did not leave partial workspaces");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -192,6 +207,23 @@ test("project-safety: links, dangling links, junctions and special entries are r
     } else {
       t.diagnostic("Windows FIFO coverage is not applicable; the junction case exercises reparse-point rejection.");
     }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("project-safety: a FIFO entry is rejected before source reading", {
+  skip: process.platform !== "linux" && "Linux FIFO entry regression",
+}, () => {
+  const root = scratch("pb-entry-fifo-");
+  try {
+    const fifo = join(root, "main.pb");
+    const created = spawnSync("mkfifo", [fifo], { encoding: "utf8", timeout: 5000 });
+    assert.ifError(created.error);
+    assert.equal(created.status, 0, created.stderr);
+    const before = tempDirs();
+    const result = callTool("pb_check", { file: fifo }, 3000);
+    assert.equal(isToolError(result), true, resultText(result));
+    assert.match(resultText(result), /entry must be a regular file/);
+    assertNoOwnedTemps(before);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -343,6 +375,36 @@ test("project-runtime: executable-relative DLL/assets load from the staged proje
     const result = run(entry);
     assert.equal(isToolError(result), false, resultText(result));
     assert.match(resultText(result), /42/);
+    assertNoOwnedTemps(before);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("project-runtime: Linux helper permissions survive staging", {
+  skip: process.platform !== "linux" && "Linux executable permission regression",
+}, () => {
+  const root = scratch("pb-runtime-permissions-");
+  try {
+    const helper = put(root, "helper.sh", "#!/bin/sh\nprintf 'helper executed\\n'\n");
+    chmodSync(helper, 0o751);
+    const entry = put(root, "main.pb", [
+      "EnableExplicit",
+      "If OpenConsole() = 0 : End 1 : EndIf",
+      'Define attributes.i = GetFileAttributes("helper.sh")',
+      "If attributes <> (#PB_FileSystem_ReadUser | #PB_FileSystem_WriteUser | #PB_FileSystem_ExecUser | #PB_FileSystem_ReadGroup | #PB_FileSystem_ExecGroup | #PB_FileSystem_ExecAll) : End 2 : EndIf",
+      'Define helper.i = RunProgram("./helper.sh", "", GetCurrentDirectory(), #PB_Program_Open | #PB_Program_Read)',
+      "If helper = 0 : End 3 : EndIf",
+      "WaitProgram(helper)",
+      "While AvailableProgramOutput(helper) > 0 : PrintN(ReadProgramString(helper)) : Wend",
+      "Define code.i = ProgramExitCode(helper)",
+      "CloseProgram(helper)",
+      "CloseConsole()",
+      "End code",
+      "",
+    ].join("\n"));
+    const before = tempDirs();
+    const result = run(entry);
+    assert.equal(isToolError(result), false, resultText(result));
+    assert.match(resultText(result), /helper executed/);
     assertNoOwnedTemps(before);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

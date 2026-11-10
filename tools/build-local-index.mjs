@@ -136,7 +136,7 @@ export function buildLocalIndex(compiler, outFile) {
   try { cached = JSON.parse(readFileSync(outFile, 'utf8')); } catch { /* Missing or invalid indexes are rebuilt. */ }
   if (cachedIndexMatches(cached, source, version)) {
     console.log(`local docs: compiler/help ${version}, unchanged (${help.path})`);
-    return;
+    return cached;
   }
 
   const work = mkdtempSync(join(tmpdir(), 'pbmcp-local-index-'));
@@ -159,6 +159,7 @@ export function buildLocalIndex(compiler, outFile) {
     mkdirSync(dirname(outFile), { recursive: true });
     writeFileSync(staged, JSON.stringify(index), { flag: 'wx' });
     renameSync(staged, outFile);
+    return index;
   } finally {
     rmSync(staged, { force: true });
     if (dirname(work) !== resolve(tmpdir()) || !basename(work).startsWith('pbmcp-local-index-')) throw new Error('Unexpected temporary path');

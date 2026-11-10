@@ -3,46 +3,29 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
-  statSync, writeFileSync,
+  writeFileSync,
 } from "node:fs";
 import http from "node:http";
 import https from "node:https";
-import { tmpdir } from "node:os";
 import net from "node:net";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomBytes } from "node:crypto";
+import { makeScratch } from "./scratch.mjs";
+
+const suiteScratch = makeScratch("http");
 
 const exe = process.env.PBMCP_EXE || fileURLToPath(new URL(`../pbmcp${process.platform === "win32" ? ".exe" : ""}`, import.meta.url));
 const ACCEPT = "application/json, text/event-stream";
 const VERSION = "2025-11-25";
 const request = (id, method, params = {}) => ({ jsonrpc: "2.0", id, method, params });
 
-// Pin determinism: resolve the newest index-*.json in the per-OS cache dir
-// by mtime (docs_index.pb DocsFindNewestIndex rule) and pin it explicitly,
-// like test/run_tests.mjs - a PBMCP_EXE candidate has no index beside it.
-function resolveNewestIndex() {
-  const dir = process.platform === "win32"
-    ? join(process.env.LOCALAPPDATA, "purebasic-mcp")
-    : join(process.env.XDG_CACHE_HOME || join(process.env.HOME, ".cache"), "purebasic-mcp");
-  if (!existsSync(dir)) return null;
-  let best = null;
-  for (const name of readdirSync(dir)) {
-    if (!/^index-.*\.json$/.test(name)) continue;
-    const p = join(dir, name);
-    try {
-      const mtime = statSync(p).mtimeMs;
-      if (!best || mtime > best.mtime) best = { path: p, mtime };
-    } catch { /* unreadable entry - skip, like the loader */ }
-  }
-  return best?.path ?? null;
-}
-const pinnedIndex = resolveNewestIndex();
+// Pin docs lookups to the checked-in fixture unless the runner supplies one.
+const pinnedIndex = process.env.PUREBASIC_MCP_INDEX || join(dirname(fileURLToPath(import.meta.url)), "fixtures", "docs-index.json");
 const caddyExe = process.env.CADDY_EXE;
 const gatewayRequired = process.env.REQUIRE_HTTP_GATEWAY === "1";
 
-// Owned pbmcp-* workspace entries in the OS temp dir (cleanup evidence),
-// same signal the project suite asserts on.
 const tempDirs = () => {
   try { return readdirSync(tmpdir()).filter((name) => name.startsWith("pbmcp-")); }
   catch { return []; }
@@ -53,14 +36,25 @@ function put(root, path, content) {
   writeFileSync(full, content);
   return full;
 }
-function scratch(prefix) { return mkdtempSync(join(tmpdir(), prefix)); }
+function scratch(prefix) { return mkdtempSync(join(suiteScratch, prefix)); }
 
 async function freePort() {
-  const server = net.createServer();
-  await new Promise((resolve, reject) => server.listen(0, "127.0.0.1", (error) => error ? reject(error) : resolve()));
-  const { port } = server.address();
-  await new Promise((resolve) => server.close(resolve));
-  return port;
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const server = net.createServer();
+    const port = 1024 + randomBytes(4).readUInt32BE() % (65000 - 1024 + 1);
+    try {
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(port, "127.0.0.1", resolve);
+      });
+      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      return port;
+    } catch (error) {
+      if (server.listening) server.close();
+      if (error.code !== "EADDRINUSE" && error.code !== "EACCES") throw error;
+    }
+  }
+  throw new Error("could not reserve an available TCP port in 64 attempts");
 }
 
 function makeCredentials(root, count = 1) {
@@ -171,6 +165,20 @@ function raw(port, chunks, { delay = 0, waitClose = true, unauthenticated = fals
       } catch (error) { finish(error); }
     });
   });
+}
+
+function rawPost(port, body, headers = {}) {
+  const bytes = Buffer.isBuffer(body) ? body : Buffer.from(body);
+  const lines = [
+    `POST /mcp HTTP/1.1`,
+    `Host: 127.0.0.1:${port}`,
+    `Content-Type: application/json`,
+    `Accept: ${headers.Accept ?? ACCEPT}`,
+    `MCP-Protocol-Version: ${VERSION}`,
+    `Content-Length: ${bytes.length}`,
+  ];
+  if (headers.authorization !== false) lines.push(`Authorization: Bearer ${headers.authorization ?? authByPort.get(port) ?? ""}`);
+  return raw(port, [Buffer.from(lines.join("\r\n") + "\r\n\r\n", "latin1"), bytes], { unauthenticated: true });
 }
 
 function splitResponse(rawText) {
@@ -413,9 +421,9 @@ test("http-protocol: initialization, requests, notifications, tools and framing"
   const listed = await post(server.port, request(2, "tools/list"), { "MCP-Protocol-Version": VERSION });
   assert.equal(listed.status, 200);
   assert.deepEqual(JSON.parse(listed.body).result.tools.map((tool) => tool.name), ["pb_docs_search", "pb_command"]);
-  const docs = await post(server.port, request(3, "tools/call", { name: "pb_docs_search", arguments: { query: "OpenConsole", library: "Console" } }), { "MCP-Protocol-Version": VERSION });
+  const docs = await post(server.port, request(3, "tools/call", { name: "pb_docs_search", arguments: { query: "OpenWindow", library: "Window" } }), { "MCP-Protocol-Version": VERSION });
   assert.equal(docs.status, 200, docs.body);
-  assert.match(docs.body, /OpenConsole/);
+  assert.match(docs.body, /OpenWindow/);
 
   const notify = await post(server.port, { jsonrpc: "2.0", method: "notifications/initialized" }, { "MCP-Protocol-Version": VERSION });
   assert.equal(notify.status, 202);
@@ -466,6 +474,69 @@ test("http-protocol: initialization, requests, notifications, tools and framing"
   assert.equal(fragmentedResponse.status, 200, fragmented.data);
   assert.equal(JSON.parse(fragmentedResponse.body).id, 9);
   assert.equal(server.stdout, "", "HTTP tool/protocol responses must not appear on stdout");
+});
+
+test("http-protocol: raw JSON validation runs before request, notification, and response handling", { concurrency: false }, async (t) => {
+  const server = await startServer(t);
+  const rejected = async (body, token = server.token) => {
+    const result = splitResponse((await rawPost(server.port, body, { authorization: token })).data);
+    assert.equal(result.status, 400, result.body);
+    assert.equal(JSON.parse(result.body).error.code, -32600, result.body);
+  };
+
+  const depth128 = `${"[".repeat(126)}0${"]".repeat(126)}`;
+  const atLimit = await post(server.port, `{"jsonrpc":"2.0","id":1,"method":"ping","params":{"x":${depth128}}}`, { "MCP-Protocol-Version": VERSION });
+  assert.equal(atLimit.status, 200, atLimit.body);
+
+  const invalidUtf8 = Buffer.from('{"jsonrpc":"2.0","id":2,"method":"ping","params":{"x":"\xff"}}', "latin1");
+  await rejected(invalidUtf8);
+  await rejected(Buffer.from('{"jsonrpc":"2.0","id":3,"method":"ping","params":{"x":"a\0b"}}', "latin1"));
+  await rejected('{"jsonrpc":"2.0","method":"notifications/initialized","params":{"x":"\\u0000"}}');
+  await rejected(`{"jsonrpc":"2.0","method":"notifications/initialized","params":{"x":${"[".repeat(127)}0${"]".repeat(127)}}}`);
+  await rejected('{"jsonrpc":"2.0","id":4,"method":"ping","params":{"x":"\\uD800"}}');
+  await rejected('{"jsonrpc":"2.0","id":9223372036854775808,"method":"ping"}');
+  await rejected('{"jsonrpc":"2.0","id":1.5,"method":"ping"}');
+  await rejected('{"jsonrpc":"2.0","id":9223372036854775808,"result":{}}', server.tokenB);
+  await rejected('{"jsonrpc":"2.0","id":1.5,"result":{}}', server.tokenB);
+  await rejected('{"jsonrpc":"2.0","id":null,"method":"notifications/initialized"}', server.tokenB);
+  await rejected('{"jsonrpc":"2.0","id":5,"result":{"x":"\\u0000"}}', server.tokenB);
+
+  for (const [id, token] of [
+    ["9223372036854775807", server.token],
+    ["9223372036854775807.0", server.token],
+    ["922337203685477580700e-2", server.tokenB],
+  ]) {
+    const response = splitResponse((await rawPost(server.port, `{"jsonrpc":"2.0","id":${id},"method":"ping"}`, { authorization: token })).data);
+    assert.equal(response.status, 200, response.body);
+    assert.match(response.body, /"id":9223372036854775807(?:,|})/, `integer boundary normalized from ${id}: ${response.body}`);
+  }
+});
+
+test("http-protocol: Accept quality values decide whether both response types are usable", { concurrency: false }, async (t) => {
+  const server = await startServer(t);
+  const cases = [
+    ["application/json;q=0, text/event-stream;q=0", 406],
+    ["application/json;q=0.000, text/event-stream;q=0.000", 406],
+    ["application/json;q=bogus, text/event-stream", 406],
+    ["application/json;q=1.001, text/event-stream", 406],
+    ["application/json;q=0.0000, text/event-stream", 406],
+    ["application/json;q=-0.1, text/event-stream", 406],
+    ["application/json;q=.5, text/event-stream", 406],
+    ['application/json;q="0.5", text/event-stream', 406],
+    ["application/json;q=0.5;q=0.8, text/event-stream", 406],
+    ["application/json;q=0.25, text/event-stream;q=0.5", 200],
+    ["application/json;q=0., text/event-stream;q=1.", 406],
+    ["application/json;q=1., text/event-stream;q=1.", 200],
+    ["application/json;q=0.001, text/event-stream;q=1.000", 200],
+    ["application/json;q=0, application/json;q=0.5, text/event-stream;q=0.5", 200],
+    ["text/event-stream;q=0.5, application/json;q=0, application/json;q=0.5", 200],
+  ];
+  for (let i = 0; i < cases.length; i++) {
+    const [accept, expected] = cases[i];
+    const token = i % 2 ? server.tokenB : server.token;
+    const result = splitResponse((await rawPost(server.port, JSON.stringify(request(i, "ping")), { Accept: accept, authorization: token })).data);
+    assert.equal(result.status, expected, `${accept}: ${result.body}`);
+  }
 });
 
 test("http-security: loopback policy, method/path rejection, framing and resource bounds", { concurrency: false }, async (t) => {
@@ -612,9 +683,9 @@ test("http-integration: staged multi-file project end to end; schemas match stdi
   assert.equal(list.status, 200);
   assert.deepEqual(JSON.parse(list.body).result.tools, stdioTools, "HTTP tools/list must equal stdio tools/list");
 
-  const docs = await toolsCall(server.port, 3, "pb_docs_search", { query: "OpenConsole", library: "Console" });
+  const docs = await toolsCall(server.port, 3, "pb_docs_search", { query: "OpenWindow", library: "Window" });
   assert.notEqual(docs.result.isError, true, docs.text);
-  assert.match(docs.text, /OpenConsole/);
+  assert.match(docs.text, /OpenWindow/);
 
   // Explicit encompassing root, nested sources, parent include, assets and
   // (on Windows) an executable-relative DLL - staged, compiled and run inside
@@ -696,16 +767,30 @@ test("http-integration: identical ids across clients stay isolated; disconnect i
     assert.match(b.text, /client-beta/);
     assert.doesNotMatch(b.text, /client-alpha/);
 
-    // Disconnect mid-run: a bounded run on a socket that goes away. The
-    // server must still finish the tool, clean its owned workspace and
-    // serve the next client without rerouting output.
-    const entryC = put(root, "c/main.pb", ["EnableExplicit", "Repeat", "ForEver", ""].join("\n"));
+    // Disconnect after the program itself writes a marker, so cleanup cannot
+    // pass merely because the unauthenticated request never dispatched.
+    const marker = join(root, "program-started.marker").replaceAll("\\", "/");
+    const markerLiteral = marker.replaceAll('"', '""');
+    const entryC = put(root, "c/main.pb", "\uFEFF" + [
+      "EnableExplicit",
+      `If CreateFile(0, "${markerLiteral}")`,
+      '  WriteStringN(0, "started")',
+      "  CloseFile(0)",
+      "EndIf",
+      "Delay(2500)",
+      "End",
+      "",
+    ].join("\n"));
     const socket = net.connect(server.port, "127.0.0.1");
     await new Promise((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
-    const body = JSON.stringify(request(77, "tools/call", { name: "pb_run", arguments: { file: entryC, timeoutMs: 1500 } }));
-    const head = `POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nContent-Type: application/json\r\nAccept: ${ACCEPT}\r\nMCP-Protocol-Version: ${VERSION}\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n`;
+    const body = JSON.stringify(request(77, "tools/call", { name: "pb_run", arguments: { file: entryC, timeoutMs: 5000 } }));
+    const head = `POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nAuthorization: Bearer ${server.token}\r\nContent-Type: application/json\r\nAccept: ${ACCEPT}\r\nMCP-Protocol-Version: ${VERSION}\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n`;
     socket.write(head + body);
-    setTimeout(() => socket.destroy(), 300);
+    const startedDeadline = Date.now() + 30000;
+    while (Date.now() < startedDeadline && !existsSync(marker)) await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(readFileSync(marker, "utf8").trim(), "started", "authenticated run reached program entry");
+    assert.ok(tempDirs().some((name) => !before.includes(name)), "staging workspace exists while the disconnected run is active");
+    socket.destroy();
     const deadline = Date.now() + 30000;
     let leftovers = [];
     while (Date.now() < deadline) {
@@ -792,9 +877,9 @@ test("http-gateway: canonical Caddy config preserves the trust boundary over ver
   const initialized = await httpsRequest(gatewayPort, gateway.ca, "/mcp", { headers: auth, body: JSON.stringify(request(3, "initialize", { protocolVersion: VERSION, capabilities: {}, clientInfo: { name: "gateway", version: "1" } })) });
   assert.equal(initialized.status, 200, initialized.body);
   assert.equal(JSON.parse(initialized.body).result.protocolVersion, VERSION);
-  const docs = await httpsRequest(gatewayPort, gateway.ca, "/mcp", { headers: auth, body: JSON.stringify(request(4, "tools/call", { name: "pb_docs_search", arguments: { query: "OpenConsole", library: "Console" } })) });
+  const docs = await httpsRequest(gatewayPort, gateway.ca, "/mcp", { headers: auth, body: JSON.stringify(request(4, "tools/call", { name: "pb_docs_search", arguments: { query: "OpenWindow", library: "Window" } })) });
   assert.equal(docs.status, 200, docs.body);
-  assert.match(docs.body, /OpenConsole/);
+  assert.match(docs.body, /OpenWindow/);
   const deniedTool = await httpsRequest(gatewayPort, gateway.ca, "/mcp", { headers: auth, body: JSON.stringify(request(5, "tools/call", { name: "pb_run", arguments: {} })) });
   assert.equal(deniedTool.status, 200, deniedTool.body);
   assert.equal(JSON.parse(deniedTool.body).result.isError, true);

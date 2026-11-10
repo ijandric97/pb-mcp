@@ -200,6 +200,7 @@ EndProcedure
 
 ; Guard the native parser and retain numeric IDs before floating-point rounding.
 Procedure.s JsonPreflight(Text$, Map NumericIds.s(), *integerOverflow.Integer)
+  If JsonHasNul(Text$) : ProcedureReturn "NUL characters are not supported in JSON strings" : EndIf
   Protected i.i = 1, length.i = Len(Text$), c.i, start.i, real.i, limit$
   Protected depth.i, requestDepth.i, request.i, idStart.i, key$, keyPos.i
   Protected paramsStart.i, paramsDepth.i, cancelStart.i, keyJson.i, code.i, low.i
@@ -473,13 +474,6 @@ EndProcedure
 Procedure HandleLine(Raw$, ControlOnly.i = #False)
   Protected line$ = RTrim(Trim(Raw$), Chr(13))
   If line$ = "" : ProcedureReturn : EndIf
-  If JsonHasNul(line$)
-    If ControlOnly
-      If QueueInput(Raw$) : ProcedureReturn : EndIf
-    EndIf
-    SendError(0, -32600, "NUL characters are not supported in JSON strings")
-    ProcedureReturn
-  EndIf
   NewMap numericIds.s()
   Protected integerOverflow.i
   Protected preflight$ = JsonPreflight(line$, numericIds(), @integerOverflow)

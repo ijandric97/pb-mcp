@@ -44,24 +44,13 @@ echo build.cmd: /CHECK on "%SRC%"
 exit /b %errorlevel%
 
 :compile
-set "REVISION=unknown"
-node "%~dp0tools\build-local-index.mjs" --compiler "%PBC%" --out "%~dp0src\pbdocs-index.json"
-if errorlevel 1 (
-    echo build.cmd: local help indexing FAILED - Node.js and matching installed help are required
-    exit /b 1
-)
-for /f "delims=" %%G in ('git -C "%~dp0." rev-parse --short HEAD 2^>nul') do set "REVISION=%%G"
-if not "%REVISION%"=="unknown" (
-    git -C "%~dp0." diff --quiet HEAD -- 2>nul
-    if errorlevel 1 set "REVISION=%REVISION%-dirty"
-)
-echo build.cmd: compiling "%SRC%"
-"%PBC%" /THREAD /CONSOLE "%SRC%" /EXE "%OUT%" /CONSTANT PBMCP_REVISION$=%REVISION%
+node "%~dp0tools\build.mjs" "%PBC%" "%SRC%" "%OUT%"
 if errorlevel 1 (
     echo build.cmd: compile FAILED
     exit /b 1
 )
 if /i "%~1"=="test" (
+    set "PBMCP_INDEX_OUT="
     for %%I in ("%OUT%") do set "PBMCP_EXE=%%~fI"
     echo build.cmd: testing "%OUT%"
     node "%~dp0test\run_tests.mjs"

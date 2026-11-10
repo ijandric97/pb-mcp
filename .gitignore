@@ -12,6 +12,7 @@
 # Distribution bundle (regenerate with make-dist.cmd)
 /dist/
 /.dist-stage*/
+/.dist-publish.lock/
 
 # Generated test output and scratch data
 /test/out/

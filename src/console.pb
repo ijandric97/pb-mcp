@@ -101,14 +101,12 @@ Procedure.i QueueInput(Text$, Error$ = "")
   ProcedureReturn #True
 EndProcedure
 
-Procedure DecodeInputFrame(*frame.InputFrameT, Bytes.i)
-  While Bytes > 0 And PeekA(*gInputBuffer + Bytes - 1) = 13 : Bytes - 1 : Wend
+Procedure.s RequestBytesError(*Buffer, Bytes.i)
   Protected i.i, c.i, remaining.i, minimum.i = $80, maximum.i = $BF
   For i = 0 To Bytes - 1
-    c = PeekA(*gInputBuffer + i)
+    c = PeekA(*Buffer + i)
     If c = 0
-      *frame\error = "NUL bytes are not supported in request lines"
-      ProcedureReturn
+      ProcedureReturn "NUL bytes are not supported in request lines"
     EndIf
     If remaining
       If c < minimum Or c > maximum : Break : EndIf
@@ -128,9 +126,15 @@ Procedure DecodeInputFrame(*frame.InputFrameT, Bytes.i)
     EndIf
   Next
   If i < Bytes Or remaining
-    *frame\error = "Request line is not valid UTF-8"
-    ProcedureReturn
+    ProcedureReturn "Request line is not valid UTF-8"
   EndIf
+  ProcedureReturn ""
+EndProcedure
+
+Procedure DecodeInputFrame(*frame.InputFrameT, Bytes.i)
+  While Bytes > 0 And PeekA(*gInputBuffer + Bytes - 1) = 13 : Bytes - 1 : Wend
+  *frame\error = RequestBytesError(*gInputBuffer, Bytes)
+  If *frame\error <> "" : ProcedureReturn : EndIf
   If Bytes > 0 : *frame\text = PeekS(*gInputBuffer, Bytes, #PB_UTF8 | #PB_ByteLength) : EndIf
 EndProcedure
 

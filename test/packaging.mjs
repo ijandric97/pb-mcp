@@ -41,9 +41,11 @@ function setPreviousDist() {
   return snapshot(dist);
 }
 
-function assertNoStaging() {
+function assertNoStaging(detail = '') {
   const leftovers = readdirSync(scratch).filter(name => name.startsWith('.dist-stage-') || name.startsWith('.dist-stage.'));
   assert.deepEqual(leftovers, [], `staging directories remain: ${leftovers.join(', ')}`);
+  const lock = join(scratch, '.dist-publish.lock');
+  assert.equal(existsSync(lock), false, `publish lock was not released${detail ? `\n${detail}` : ''}`);
 }
 
 try {
@@ -61,6 +63,7 @@ try {
   writeFileSync(join(scratch, 'INSTALL.md'), 'install');
   writeFileSync(join(scratch, 'LICENSE'), 'license');
   writeFileSync(join(scratch, 'src', 'pbdocs-index.json'), '{"commands":[]}');
+  writeFileSync(join(scratch, 'packaged-index.json'), '{"commands":[]}');
   writeFileSync(join(scratch, 'skills', 'purebasic', 'SKILL.md'), 'skill');
   writeFileSync(join(scratch, 'skills', 'purebasic', 'references', 'guide.md'), 'guide');
   writeFileSync(join(scratch, 'version'), 'process.exit(0);\n');
@@ -70,6 +73,8 @@ try {
     writeFileSync(join(scratch, 'build.cmd'), [
       '@echo off',
       'if "%FAIL_BUILD%"=="1" exit /b 1',
+      'copy /y "%~dp0packaged-index.json" "%PBMCP_INDEX_OUT%" >nul || exit /b 1',
+      String.raw`>"%~dp0src\pbdocs-index.json" echo changed by another build`,
       'if "%FAIL_SMOKE%"=="1" (echo invalid>"%PBMCP_OUT%") else (copy /y "%PBMCP_NODE_EXE%" "%PBMCP_OUT%" >nul)',
       'exit /b 0',
       '',
@@ -78,16 +83,32 @@ try {
     writeFileSync(join(scratch, 'build.sh'), [
       '#!/bin/bash',
       'if [ "${FAIL_BUILD:-0}" = 1 ]; then exit 1; fi',
+      'cp packaged-index.json "$PBMCP_INDEX_OUT" || exit 1',
+      'printf "changed by another build" > src/pbdocs-index.json',
       'if [ "${FAIL_SMOKE:-0}" = 1 ]; then printf invalid > "$PBMCP_OUT"; else cp "$PBMCP_NODE_EXE" "$PBMCP_OUT" && chmod +x "$PBMCP_OUT"; fi',
       '',
     ].join('\n'), { mode: 0o755 });
   }
 
   let previous = setPreviousDist();
+  const sourceBeforeLock = readFileSync(join(scratch, 'src', 'pbdocs-index.json'), 'utf8');
+  mkdirSync(join(scratch, '.dist-publish.lock'));
   let result = run({ FAIL_BUILD: '1' });
+  assert.notEqual(result.status, 0, 'publisher ignored an existing lock');
+  assert.ok((result.stdout + result.stderr).includes('publish lock exists'), 'lock rejection was not explained');
+  assert.deepEqual(snapshot(dist), previous, 'lock rejection changed the previous bundle');
+  assert.equal(readFileSync(join(scratch, 'src', 'pbdocs-index.json'), 'utf8'), sourceBeforeLock,
+    'lock rejection entered the build');
+  assert.equal(readdirSync(scratch).some(name => name.startsWith('.dist-stage')), false,
+    'lock rejection created a staging directory');
+  assert.equal(existsSync(join(scratch, '.dist-publish.lock')), true, 'rejected publisher removed another publisher’s lock');
+  rmSync(join(scratch, '.dist-publish.lock'), { recursive: true });
+
+  previous = setPreviousDist();
+  result = run({ FAIL_BUILD: '1' });
   assert.notEqual(result.status, 0, 'build failure unexpectedly succeeded');
   assert.deepEqual(snapshot(dist), previous, 'build failure changed the previous bundle');
-  assertNoStaging();
+  assertNoStaging(`${result.stdout}\n${result.stderr}`);
 
   for (const name of ['INSTALL.md', 'LICENSE']) {
     previous = setPreviousDist();

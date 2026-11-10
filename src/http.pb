@@ -328,13 +328,39 @@ Procedure.i HttpDecimal(Text$, *Value.Integer)
   ProcedureReturn 1
 EndProcedure
 
+Procedure.i HttpQuality(Text$)
+  If Text$ = "0" : ProcedureReturn 0 : EndIf
+  If Text$ = "1" : ProcedureReturn 1000 : EndIf
+  If Len(Text$) < 2 Or Len(Text$) > 5 Or Mid(Text$, 2, 1) <> "." : ProcedureReturn -1 : EndIf
+  Protected whole$ = Left(Text$, 1), i.i, digit.i, quality.i
+  If whole$ <> "0" And whole$ <> "1" : ProcedureReturn -1 : EndIf
+  For i = 3 To Len(Text$)
+    digit = Asc(Mid(Text$, i, 1)) - 48
+    If digit < 0 Or digit > 9 Or (whole$ = "1" And digit <> 0) : ProcedureReturn -1 : EndIf
+    quality = quality * 10 + digit
+  Next
+  If whole$ = "1" : ProcedureReturn 1000 : EndIf
+  For i = Len(Text$) To 4 : quality * 10 : Next
+  ProcedureReturn quality
+EndProcedure
+
 Procedure.i HttpAcceptHas(Accept$, Media$)
-  Protected i.i, item$, semi.i
+  Protected i.i, j.i, item$, param$, equals.i, quality.i, qualitySeen.i
   For i = 1 To CountString(Accept$, ",") + 1
     item$ = LCase(Trim(StringField(Accept$, i, ",")))
-    semi = FindString(item$, ";")
-    If semi : item$ = Trim(Left(item$, semi - 1)) : EndIf
-    If item$ = Media$ : ProcedureReturn #True : EndIf
+    If Trim(StringField(item$, 1, ";")) <> Media$ : Continue : EndIf
+    quality = 1000 : qualitySeen = #False
+    For j = 2 To CountString(item$, ";") + 1
+      param$ = Trim(StringField(item$, j, ";"))
+      equals = FindString(param$, "=")
+      If Trim(StringField(param$, 1, "=")) = "q"
+        If qualitySeen Or equals = 0 : quality = -1 : Break : EndIf
+        qualitySeen = #True
+        quality = HttpQuality(Trim(Mid(param$, equals + 1)))
+        If quality < 0 : Break : EndIf
+      EndIf
+    Next
+    If quality > 0 : ProcedureReturn #True : EndIf
   Next
   ProcedureReturn #False
 EndProcedure
@@ -451,13 +477,17 @@ Procedure.i HttpParseHeaders(*c.HttpConnectionT)
   ProcedureReturn 1
 EndProcedure
 
-Procedure.i HttpValidJsonRpc(JSON.i, *isNotification.Integer, *isResponse.Integer, *isInitialize.Integer)
+Procedure.i HttpValidJsonRpc(JSON.i, *isNotification.Integer, *isResponse.Integer, *isInitialize.Integer, NumericId$)
   Protected root.i = JSONValue(JSON)
   If JSONType(root) <> #PB_JSON_Object : ProcedureReturn #False : EndIf
   Protected rpc.i = GetJSONMember(root, "jsonrpc")
   If rpc = 0 Or JSONType(rpc) <> #PB_JSON_String Or GetJSONString(rpc) <> "2.0" : ProcedureReturn #False : EndIf
   Protected method.i = GetJSONMember(root, "method")
   Protected id.i = GetJSONMember(root, "id")
+  If id And JSONType(id) = #PB_JSON_Number
+    Protected number.q
+    If Not JsonIdInteger(NumericId$, @number) : ProcedureReturn #False : EndIf
+  EndIf
   If method = 0
     ; A client response has exactly one of result/error and a valid response id.
     If id = 0 : ProcedureReturn #False : EndIf
@@ -486,15 +516,32 @@ Procedure.i HttpValidJsonRpc(JSON.i, *isNotification.Integer, *isResponse.Intege
 EndProcedure
 
 Procedure HttpProcessBody(Client.i, *body, BodyLength.i, VersionHeader$, VersionSeen.i, ClientIndex.i, StartedAt.q)
-  Protected body$ = PeekS(*body, BodyLength, #PB_UTF8 | #PB_ByteLength)
+  Protected issue$ = RequestBytesError(*body, BodyLength), body$
+  NewMap numericIds.s()
+  Protected integerOverflow.Integer
+  If issue$ = ""
+    body$ = PeekS(*body, BodyLength, #PB_UTF8 | #PB_ByteLength)
+    issue$ = JsonPreflight(body$, numericIds(), @integerOverflow)
+  EndIf
+  If issue$ <> ""
+    HttpSendResponse(Client, 400, "application/json", HttpJsonError(-32600, issue$))
+    HttpAuditEvent(ClientIndex, "POST", "", 400, "denied", ElapsedMilliseconds() - StartedAt)
+    ProcedureReturn
+  EndIf
   Protected json.i = ParseJSON(#PB_Any, body$)
   If json = 0
     HttpSendResponse(Client, 400, "application/json", HttpJsonError(-32700, "Parse error"))
     HttpAuditEvent(ClientIndex, "POST", "", 400, "denied", ElapsedMilliseconds() - StartedAt)
     ProcedureReturn
   EndIf
+  If integerOverflow\i
+    FreeJSON(json)
+    HttpSendResponse(Client, 400, "application/json", HttpJsonError(-32600, "JSON integer is outside the signed 64-bit range"))
+    HttpAuditEvent(ClientIndex, "POST", "", 400, "denied", ElapsedMilliseconds() - StartedAt)
+    ProcedureReturn
+  EndIf
   Protected notify.Integer, response.Integer, initialize.Integer
-  If Not HttpValidJsonRpc(json, @notify, @response, @initialize)
+  If Not HttpValidJsonRpc(json, @notify, @response, @initialize, numericIds("0"))
     FreeJSON(json)
     HttpSendResponse(Client, 400, "application/json", HttpJsonError(-32600, "Invalid Request"))
     HttpAuditEvent(ClientIndex, "POST", "", 400, "denied", ElapsedMilliseconds() - StartedAt)

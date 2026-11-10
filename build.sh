@@ -55,24 +55,13 @@ if [ "${1:-}" = "check" ]; then
   exec "$PBC" --thread --check --console "$SRC"
 fi
 
-if ! node tools/build-local-index.mjs --compiler "$PBC" --out src/pbdocs-index.json; then
-  echo "build.sh: local help indexing FAILED - Node.js and matching installed help are required"
-  exit 1
-fi
-
-REVISION=$(git rev-parse --short HEAD 2>/dev/null) || REVISION=unknown
-if [ "$REVISION" != unknown ] && ! git diff --quiet HEAD --; then REVISION="$REVISION-dirty"; fi
-
-echo "build.sh: compiling \"$SRC\""
-"$PBC" --thread --console "$SRC" --output "$OUT" --constant "PBMCP_REVISION\$=$REVISION"
-RC=$?
-if [ $RC -ne 0 ] || [ ! -f "$OUT" ]; then
+if ! node tools/build.mjs "$PBC" "$SRC" "$OUT"; then
   echo "build.sh: compile FAILED"
   exit 1
 fi
 if [ "${1:-}" = "test" ]; then
   case "$OUT" in /*) ;; *) OUT="$PWD/$OUT" ;; esac
   echo "build.sh: testing \"$OUT\""
-  PBMCP_EXE="$OUT" node test/run_tests.mjs || exit $?
+  PBMCP_INDEX_OUT= PBMCP_EXE="$OUT" node test/run_tests.mjs || exit $?
 fi
 echo "build.sh: OK - \"$OUT\""

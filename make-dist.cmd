@@ -22,6 +22,14 @@ rem until the new bundle builds, copies, and passes its acceptance suite.
 rem ---------------------------------------------------------------------------
 cd /d "%~dp0" || exit /b 1
 
+rem mkdir is atomic, so only one local publisher can recover/build/publish at a time.
+rem shortcut: a hard kill leaves this lock; remove it only after confirming no publisher is active.
+mkdir "%~dp0.dist-publish.lock" >nul 2>&1
+if errorlevel 1 (
+    echo make-dist: publish lock exists at "%~dp0.dist-publish.lock" - another publish may be running, or remove it after confirming no publisher is active
+    exit /b 1
+)
+
 rem Recover an old bundle left by an uncatchable interruption after its rename.
 if not exist "%~dp0dist" for /d %%B in ("%~dp0.dist-stage-*.old") do if not exist "%~dp0dist" if exist "%%B\pbmcp.exe" if exist "%%B\index.json" if exist "%%B\README.md" (
     move "%%B" "%~dp0dist" >nul || echo make-dist: previous dist remains at "%%B"
@@ -46,17 +54,18 @@ echo make-dist: assembling staged dist layout
 
 echo make-dist: building pbmcp.exe
 set "PBMCP_OUT=%STAGE%\pbmcp.exe"
+set "PBMCP_INDEX_OUT=%STAGE%\index.json"
 call build.cmd
 if errorlevel 1 (
     echo make-dist: build FAILED
     goto :fail
 )
+set "PBMCP_INDEX_OUT="
 
 echo make-dist: copying docs + skill
 copy /y "README.md"                 "%STAGE%\" >nul || goto :fail
 copy /y "INSTALL.md"                "%STAGE%\" >nul || goto :fail
 copy /y "LICENSE"                    "%STAGE%\" >nul || goto :fail
-copy /y "src\pbdocs-index.json" "%STAGE%\index.json" >nul || goto :fail
 echo make-dist: copying complete skill tree (SKILL.md + references\)
 xcopy /e /i /y "skills\purebasic" "%STAGE%\skills\purebasic\" >nul || goto :fail
 
@@ -93,11 +102,13 @@ if exist "%BACKUP%" (
 
 echo make-dist: OK
 dir /b "dist" "dist\skills\purebasic"
+rmdir "%~dp0.dist-publish.lock" >nul 2>&1
 endlocal
 exit /b 0
 
 :no_stage
 echo make-dist: could not create a unique staging directory
+rmdir "%~dp0.dist-publish.lock" >nul 2>&1
 exit /b 1
 
 :fail
@@ -107,4 +118,5 @@ if defined BACKUP if exist "%BACKUP%" (
 )
 if defined STAGE_OWNED if exist "%STAGE%" rmdir /s /q "%STAGE%"
 echo make-dist: assembly FAILED
+rmdir "%~dp0.dist-publish.lock" >nul 2>&1
 exit /b 1

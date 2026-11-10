@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,6 +84,33 @@ function compile(source, output) {
   const result = spawnSync(compiler, win ? ['/THREAD', '/CONSOLE', source, '/EXE', output]
     : ['--thread', '--console', source, '--output', output], { cwd: root, env, encoding: 'utf8', timeout: 20000, windowsHide: true });
   assert.equal(result.status, 0, result.stdout + result.stderr + String(result.error || ''));
+}
+
+// Cancellation must reach staging before its size guard returns an error.
+const stagingProject = join(scratch, 'staging');
+mkdirSync(stagingProject);
+const stagingSource = join(stagingProject, 'main.pb');
+writeFileSync(stagingSource, '\uFEFFEnableExplicit\n');
+const oversizedAsset = join(stagingProject, 'oversized.bin');
+writeFileSync(oversizedAsset, '');
+truncateSync(oversizedAsset, 256 * 1024 * 1024 + 1);
+const stagingServer = startServer();
+try {
+  stagingServer.stdin.write(json(call('staging-warm', 'pb_version', {})));
+  await waitFor(stagingServer, () => stagingServer.responses.some(r => r.id === 'staging-warm'), 'warm compiler discovery');
+  const before = readdirSync(tmpdir()).sort();
+  for (const tool of ['pb_check', 'pb_run']) {
+    const id = 'staging-' + tool;
+    stagingServer.stdin.write(json(call(id, tool, { file: stagingSource })) + json(ping(id + '-ping')) +
+      json(cancelled(id)) + json(call(id + '-after', 'pb_version', {})));
+    await waitFor(stagingServer, () => stagingServer.responses.some(r => r.id === id + '-after'), 'staging cancellation', 3000);
+    assert.ok(stagingServer.responses.some(r => r.id === id + '-ping'), 'staging did not answer its ping');
+    assert.equal(stagingServer.responses.some(r => r.id === id), false, 'staging completed before processing cancellation');
+    assert.deepEqual(readdirSync(tmpdir()).sort(), before, 'cancelled staging left a workspace');
+  }
+} finally {
+  await closeServer(stagingServer);
+  rmSync(stagingProject, { recursive: true, force: true });
 }
 
 const runnerSource = join(scratch, 'descendants.pb');
@@ -349,4 +376,4 @@ for (const [name, args] of [['valid', { file: inputSource }], ['invalid', {}]]) 
   }
 }
 
-console.log('cancellation tests passed (runtime/compiler trees, exact IDs and reuse, fragmented controls, ignored cancellations, queued/mixed calls, prompt batch pings and full-queue recovery)');
+console.log('cancellation tests passed (staging pings/cancellation/cleanup, runtime/compiler trees, exact IDs and reuse, fragmented controls, ignored cancellations, queued/mixed calls, prompt batch pings and full-queue recovery)');

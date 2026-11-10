@@ -19,13 +19,6 @@ function run(command, args, options = {}) {
 }
 
 try {
-  const git = args => {
-    const result = run('git', args, { cwd: scratch, env: { ...process.env,
-      GIT_AUTHOR_NAME: 'build test', GIT_AUTHOR_EMAIL: 'build@example.invalid',
-      GIT_COMMITTER_NAME: 'build test', GIT_COMMITTER_EMAIL: 'build@example.invalid' } });
-    assert.equal(result.status, 0, result.stderr || result.stdout);
-    return result.stdout.trim();
-  };
   mkdirSync(join(scratch, 'tools'), { recursive: true });
   mkdirSync(join(scratch, 'src'));
   mkdirSync(join(scratch, 'test'));
@@ -33,10 +26,11 @@ try {
   mkdirSync(join(scratch, 'compiler', 'compilers'), { recursive: true });
   writeFileSync(join(scratch, 'build.sh'), readFileSync(join(root, 'build.sh')));
   writeFileSync(join(scratch, 'tools', 'lint_encoding.mjs'), '');
-  writeFileSync(join(scratch, 'tools', 'build-local-index.mjs'), '');
+  writeFileSync(join(scratch, 'tools', 'build.mjs'), '');
   writeFileSync(join(scratch, 'test', 'run_tests.mjs'), '');
   const testTargetLog = join(scratch, 'test-target.txt');
   const defaultTargetLog = join(scratch, 'default-target.txt');
+  const buildArgsLog = join(scratch, 'build-args.txt');
   writeFileSync(join(scratch, 'src', 'main.pb'), '\uFEFFEnableExplicit\n');
   writeFileSync(join(scratch, 'src', 'pbdocs-index.json'), 'embedded index before build\n');
   const nodeStub = join(scratch, 'bin', 'node');
@@ -44,53 +38,34 @@ try {
     '#!/bin/bash',
     'case "$1" in',
     '  tools/lint_encoding.mjs) exit 0 ;;',
-    '  tools/build-local-index.mjs) printf "regenerated index\\n" > src/pbdocs-index.json; exit 0 ;;',
-    '  test/run_tests.mjs) printf "%s" "$PBMCP_EXE" > "$FAKE_TEST_TARGET"; printf "%s/pbmcp" "$PWD" > "$FAKE_DEFAULT_TARGET"; exit "${FAKE_TEST_STATUS:-0}" ;;',
+    '  tools/build.mjs) printf "%s\\n" "$2" "$3" "$4" > "$FAKE_BUILD_ARGS"; if [ "${FAKE_BUILD_STATUS:-0}" != 0 ]; then exit "$FAKE_BUILD_STATUS"; fi; printf "fake executable\\n" > "$4" ;;',
+    '  test/run_tests.mjs) if [ -n "${PBMCP_INDEX_OUT:-}" ]; then exit 9; fi; printf "%s" "$PBMCP_EXE" > "$FAKE_TEST_TARGET"; printf "%s/pbmcp" "$PWD" > "$FAKE_DEFAULT_TARGET"; exit "${FAKE_TEST_STATUS:-0}" ;;',
     '  *) exit 9 ;;',
     'esac',
     '',
   ].join('\n'), { mode: 0o755 });
   const compiler = join(scratch, 'compiler', 'compilers', 'pbcompiler');
-  const constantFile = join(scratch, 'constant.txt');
-  writeFileSync(compiler, [
-    '#!/bin/bash',
-    'out=""',
-    'while [ "$#" -gt 0 ]; do',
-    '  case "$1" in',
-    '    --constant) printf "%s" "$2" > "$FAKE_CONSTANT"; shift 2 ;;',
-    '    --output) out="$2"; shift 2 ;;',
-    '    *) shift ;;',
-    '  esac',
-    'done',
-    'printf "fake executable\\n" > "$out"',
-    '',
-  ].join('\n'), { mode: 0o755 });
+  writeFileSync(compiler, '#!/bin/bash\nexit 99\n', { mode: 0o755 });
   const inheritedOut = join(scratch, 'inherited output sentinel');
   writeFileSync(inheritedOut, 'keep this file\n');
-  const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true });
-  if (gitProbe.error || gitProbe.status !== 0) {
-    console.log('build regression skipped: git unavailable');
-  } else {
-    mkdirSync(join(scratch, 'empty-hooks'));
-    git(['init', '-q']);
-    git(['add', '.']);
-    git(['-c', `core.hooksPath=${join(scratch, 'empty-hooks')}`, '-c', 'commit.gpgsign=false',
-      'commit', '-qm', 'clean fixture']);
-    const revision = git(['rev-parse', '--short', 'HEAD']);
+  {
     const bash = win ? (process.env.PBMCP_BASH || 'C:\\Program Files\\Git\\usr\\bin\\bash.exe') : 'bash';
     const originalOut = process.env.PBMCP_OUT;
     process.env.PBMCP_OUT = inheritedOut;
     const env = { ...process.env, PATH: `${join(scratch, 'bin')}${win ? ';' : ':'}${process.env.PATH}`,
-        PUREBASIC_HOME: join(scratch, 'compiler'), FAKE_CONSTANT: constantFile,
+        PUREBASIC_HOME: join(scratch, 'compiler'), FAKE_BUILD_ARGS: buildArgsLog,
         FAKE_TEST_TARGET: testTargetLog, FAKE_DEFAULT_TARGET: defaultTargetLog,
-        PBMCP_OUT: '', PBMCP_EXE: '' };
+        PBMCP_OUT: '', PBMCP_EXE: '', PBMCP_INDEX_OUT: 'must not reach tests' };
     if (originalOut === undefined) delete process.env.PBMCP_OUT;
     else process.env.PBMCP_OUT = originalOut;
     const build = (args, extra = {}) => run(bash, [join(scratch, 'build.sh'), ...args], { cwd: scratch,
       timeout: 15000, env: { ...env, ...extra } });
     const result = build([]);
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.equal(readFileSync(constantFile, 'utf8'), `PBMCP_REVISION$=${revision}-dirty`);
+    const forwarded = readFileSync(buildArgsLog, 'utf8').trimEnd().replaceAll('\\', '/').split('\n');
+    assert.ok(forwarded[0].endsWith('/compiler/compilers/pbcompiler'), forwarded[0]);
+    assert.ok(forwarded[1].endsWith('/src/main.pb'), forwarded[1]);
+    assert.ok(forwarded[2].endsWith('/pbmcp'), forwarded[2]);
     assert.equal(readFileSync(join(scratch, 'pbmcp'), 'utf8'), 'fake executable\n');
     const tested = build(['test']);
     assert.equal(tested.status, 0, tested.stderr || tested.stdout);
@@ -108,7 +83,10 @@ try {
     assert.equal(failedTests.status, 7, failedTests.stderr || failedTests.stdout);
     assert.equal(readFileSync(testTargetLog, 'utf8'), `${shellRoot}/${override}`);
     assert.equal(readFileSync(inheritedOut, 'utf8'), 'keep this file\n', 'inherited PBMCP_OUT escaped the isolated fixture');
-    console.log('build tests passed (dirty revision, acceptance test target/default and override, failure propagation)');
+    const failedBuild = build([], { FAKE_BUILD_STATUS: '8' });
+    assert.equal(failedBuild.status, 1, failedBuild.stderr || failedBuild.stdout);
+    assert.equal(build(['check']).status, 99, 'syntax check did not bypass the shared build helper');
+    console.log('build.sh tests passed (shared build arguments, acceptance target/default and override, failure propagation)');
   }
 
   if (win) {
@@ -131,11 +109,12 @@ try {
     mkdirSync(join(fixture, 'test'), { recursive: true });
     mkdirSync(join(fixture, 'output with spaces'), { recursive: true });
     copyFileSync(join(root, 'build.cmd'), join(fixture, 'build.cmd'));
+    copyFileSync(join(root, 'tools', 'build.mjs'), join(fixture, 'tools', 'build.mjs'));
     writeFileSync(join(fixture, 'src', 'main.pb'), '\uFEFFEnableExplicit\n');
     writeFileSync(join(fixture, 'tools', 'lint_encoding.mjs'),
       'if (process.env.FAKE_LINT_FAIL === "1") process.exit(8);\n');
     writeFileSync(join(fixture, 'tools', 'build-local-index.mjs'),
-      'if (process.env.FAKE_INDEX_FAIL === "1") process.exit(9);\n');
+      'export function buildLocalIndex() { if (process.env.FAKE_INDEX_FAIL === "1") throw new Error("index failed"); return { commands: [], reference: [] }; }\n');
     writeFileSync(join(fixture, 'test', 'run_tests.mjs'), [
       "import { writeFileSync } from 'node:fs';",
       'writeFileSync(process.env.FAKE_TEST_TARGET, process.env.PBMCP_EXE || "");',
@@ -183,8 +162,11 @@ try {
       const args = compilerArgs();
       assert.deepEqual(args.slice(0, 5), ['/THREAD', '/CONSOLE', join(fixture, 'src', 'main.pb'), '/EXE', target]);
       assert.equal(args[5], '/CONSTANT');
-      assert.match(args[6], /^PBMCP_REVISION\$=(?:[0-9a-f]+(?:-dirty)?|unknown)$/i);
-      assert.equal(args.length, 7);
+      assert.ok(args[6].startsWith('PBMCP_INDEX$='), args[6]);
+      assert.equal(existsSync(args[6].slice('PBMCP_INDEX$='.length)), false, 'private index snapshot leaked');
+      assert.equal(args[7], '/CONSTANT');
+      assert.match(args[8], /^PBMCP_REVISION\$=(?:g[0-9a-f]+(?:-dirty)?|unknown)$/i);
+      assert.equal(args.length, 9);
     };
 
     clearLog();

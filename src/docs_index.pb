@@ -41,11 +41,15 @@
 EnableExplicit
 
 ; --- embedded index (DataSection) ------------------------------------------
-; Source builds generate src/pbdocs-index.json from the installed help.
+; Source builds embed a private snapshot; direct compiler checks use the cache.
 ; CatchJSON() reads the embedded UTF-8 bytes.
 DataSection
 EmbedIndexStart:
-  IncludeBinary "pbdocs-index.json"
+  CompilerIf Defined(PBMCP_INDEX$, #PB_Constant)
+    IncludeBinary #PBMCP_INDEX$
+  CompilerElse
+    IncludeBinary "pbdocs-index.json"
+  CompilerEndIf
 EmbedIndexEnd:
 EndDataSection
 
