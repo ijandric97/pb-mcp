@@ -325,7 +325,7 @@ test("http-profile: default HTTP exposes only documentation tools and denies dir
   const stdioMessages = stdio.stdout.trim().split(/\r?\n/).map((line) => JSON.parse(line));
   assert.deepEqual(JSON.parse(fullList.body).result.tools, stdioMessages.find((message) => message.id === 2).result.tools);
   const stdioInstructions = stdioMessages.find((message) => message.id === 1).result.instructions;
-  assert.equal(stdioInstructions, "Search before writing PureBasic (pb_docs_search, pb_command), verify every edit with pb_check, and use pb_run only for bounded console tests.");
+  assert.equal(stdioInstructions, "Use pb_command directly for known command names and pb_docs_search to discover names. Reuse documentation already retrieved in this session. Verify each coherent edit batch with pb_check before delivery; use pb_run for bounded noninteractive console tests.");
   const fullInit = await post(full.port, request(5, "initialize", { protocolVersion: VERSION, capabilities: {}, clientInfo: { name: "profile", version: "1" } }));
   assert.equal(JSON.parse(fullInit.body).result.instructions, stdioInstructions);
 });

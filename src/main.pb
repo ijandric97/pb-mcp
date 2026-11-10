@@ -167,9 +167,8 @@ ElseIf arg$ = "http"
     End 2
   EndIf
   gHttpAllowCompilerTools = httpAllowCompiler\i
-  DocsPreloadStart()
+  If GetEnvironmentVariable("PBMCP_PRELOAD") = "1" : DocsIndexEnsure() : EndIf
   If Not HttpServe(httpPort\i)
-    DocsPreloadStop()
     End 1
   EndIf
 ElseIf arg$ <> ""

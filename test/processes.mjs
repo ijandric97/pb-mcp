@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeScratch } from './scratch.mjs';
 
@@ -100,8 +100,8 @@ for (const mode of ['normal', 'timeout', 'server-exit']) {
     if (!pid && existsSync(base + '-pid')) [pid, program] = readFileSync(base + '-pid', 'utf8').trim().split(/\r?\n/);
     if (pid && alive(Number(pid))) { process.kill(Number(pid), 'SIGKILL'); await sleep(100); }
     if (program) {
-      const target = resolve(dirname(program));
-      assert.equal(dirname(target), resolve(tmpdir()));
+      const target = resolve(dirname(dirname(program)));
+      assert.equal(relative(tmpdir(), dirname(target)), '');
       assert.ok(basename(target).startsWith('pbmcp-'));
       rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }

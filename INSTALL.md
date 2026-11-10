@@ -6,7 +6,7 @@ Windows, `pbmcp` on Linux.
 
     pbmcp[.exe]                    the MCP server (stdio, JSON-RPC 2.0; optional
                                    HTTP serve mode, see step 3)
-    index-6.40.json                docs index drop-in (newest index-*.json in
+    index.json                     docs index drop-in (newest index*.json in
                                    the exe's directory wins)
     skills/purebasic/SKILL.md      companion agent skill (recommended)
     README.md                      full documentation
@@ -283,7 +283,7 @@ Run Caddy as a separate restricted account using its documented native
 service mechanism; grant it no access to `auth.json`. Allow inbound TCP 443
 and optionally 80 only; block public access to 6817. Verify effective ACLs and
 service-account file access. Set `PBMCP_PRELOAD=0` in both platform recipes
-because of the separate known Windows preload race. Compiler tools are not
+to load documentation lazily. Compiler tools are not
 available by default; use `--allow-compiler-tools` only on an isolated host
 for trusted clients. Compilation can read host files and execute with the
 service account's filesystem/network rights. Authentication and TLS do not
@@ -294,7 +294,7 @@ alternative.
 
 ## 4. Docs index (optional)
 
-The bundle ships a ready `index-6.40.json`; the docs tools
+The bundle ships a ready `index.json`; the docs tools
 (`pb_docs_search` / `pb_command`) answer from it out of the box.
 
 Source builds automatically generate the index from the selected compiler's
@@ -335,7 +335,7 @@ Claude Code — copy to `~/.claude/skills/purebasic/`. Other clients: drop the
 | `PUREBASIC_MCP_INDEX`        | Pin an explicit docs index file (overrides exe-dir/embedded discovery) |
 | `PUREBASIC_MCP_METRICS`      | Redirect the JSONL metrics file                                        |
 | `PUREBASIC_MCP_NO_METRICS=1` | Disable metrics writes                                                 |
-| `PBMCP_PRELOAD`              | Serve-mode docs-index preload: default on in thread-safe builds (`--thread` Linux), off on the Windows non-TS build; `0` forces off, `1` forces on (heap-corruption hazard on Windows non-TS) |
+| `PBMCP_PRELOAD=1`            | Load documentation synchronously at startup; default/`0` loads it on the first docs call |
 
 The metrics file defaults to `<cache>/purebasic-mcp/metrics.jsonl`, where
 `<cache>` is `%LOCALAPPDATA%` on Windows and `${XDG_CACHE_HOME:-~/.cache}`

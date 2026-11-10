@@ -459,8 +459,8 @@ Procedure ToolDispatch(IdValue.i, Params.i)
   Select name$
     Case "pb_docs_search" : allowed$ = "query|library|limit"
     Case "pb_command"     : allowed$ = "name"
-    Case "pb_check"       : allowed$ = "file"
-    Case "pb_run"         : allowed$ = "file|args|timeoutMs"
+    Case "pb_check"       : allowed$ = "file|projectRoot"
+    Case "pb_run"         : allowed$ = "file|projectRoot|args|timeoutMs"
     Case "pb_version"     : allowed$ = ""
     Default
       SendError(IdValue, -32602, "Tool " + name$ + " not found")

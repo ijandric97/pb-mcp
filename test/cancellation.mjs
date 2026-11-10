@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeScratch } from './scratch.mjs';
 
@@ -145,8 +145,8 @@ try {
   while (alive(runtimePid) && performance.now() < deadline) await sleep(10);
   assert.equal(alive(runtimePid), false, `cancelled descendant ${runtimePid} survived`);
   assert.equal(existsSync(runtimeBase + '-late'), false, 'cancelled descendant continued running');
-  const tempDir = resolve(dirname(runtimeProgram));
-  assert.equal(dirname(tempDir), resolve(tmpdir()));
+  const tempDir = resolve(dirname(dirname(runtimeProgram)));
+  assert.equal(relative(tmpdir(), dirname(tempDir)), '');
   assert.ok(basename(tempDir).startsWith('pbmcp-'));
   assert.equal(existsSync(tempDir), false, 'cancelled pb_run temp directory remained');
   // Reuse the canceled ID; cancellation state must not leak to a later request.
@@ -156,8 +156,8 @@ try {
   await closeServer(runtime);
   if (runtimePid && alive(runtimePid)) process.kill(runtimePid, 'SIGKILL');
   if (runtimeProgram) {
-    const target = resolve(dirname(runtimeProgram));
-    assert.equal(dirname(target), resolve(tmpdir()));
+    const target = resolve(dirname(dirname(runtimeProgram)));
+    assert.equal(relative(tmpdir(), dirname(target)), '');
     if (existsSync(target)) rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
@@ -215,8 +215,9 @@ try {
   await closeServer(batched);
   if (batchPid && alive(batchPid)) process.kill(batchPid, 'SIGKILL');
   if (batchProgram) {
-    const target = resolve(dirname(batchProgram));
-    assert.equal(dirname(target), resolve(tmpdir()));
+    const target = resolve(dirname(dirname(batchProgram)));
+    assert.equal(relative(tmpdir(), dirname(target)), '');
+    assert.ok(basename(target).startsWith('pbmcp-'));
     if (existsSync(target)) rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }

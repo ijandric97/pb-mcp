@@ -1571,8 +1571,10 @@ Procedure RunCheck(CompilerExe$, AbsFile$, ProjectRoot$, *c.CheckResT)
   EndIf
 
   Protected proc.RunResT
-  CompilerStepWithRetry(CompilerExe$, #SW_CHECK$, copyile, PathJoin(copydir, "check" + #ExeSuffix$), GetPathPart(copyile), @proc)
-  CleanupTempDir(copydir)
+  CompilerStepWithRetry(CompilerExe$, #SW_CHECK$, copy\file, PathJoin(copy\dir, "check" + #ExeSuffix$), GetPathPart(copy\file), @proc)
+  proc\stdout = ReplaceString(proc\stdout, copy\root, Left(AbsFile$, Len(copy\sourceRoot)))
+  proc\stderr = ReplaceString(proc\stderr, copy\root, Left(AbsFile$, Len(copy\sourceRoot)))
+  CleanupTempDir(copy\dir)
 
   ParseDiagnostics(proc\stdout, *c\errors(), *c\warnings())
   *c\timedOut = proc\timedOut

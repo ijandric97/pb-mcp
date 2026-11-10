@@ -10,10 +10,13 @@ export function makeScratch(name) {
   assert.ok(relativeScratch && !relativeScratch.startsWith('..') &&
     dirname(scratch) === parent && basename(scratch).startsWith(`pbmcp-${name}-`));
 
-  process.env.TMPDIR = process.env.TEMP = process.env.TMP = scratch;
+  // Keep compiler staging outside the source tree used by each test.
+  const runtime = resolve(mkdtempSync(join(parent, `pbmcp-${name}-runtime-`)));
+  process.env.TMPDIR = process.env.TEMP = process.env.TMP = runtime;
   process.on('exit', () => {
     if (dirname(scratch) === parent && basename(scratch).startsWith(`pbmcp-${name}-`)) {
       try { rmSync(scratch, { recursive: true, force: true }); } catch {}
+      try { rmSync(runtime, { recursive: true, force: true }); } catch {}
     }
   });
   return scratch;

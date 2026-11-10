@@ -18,7 +18,7 @@ dependencies (no Node, no npx).
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `pb_docs_search` | Search the PureBasic command reference. Returns command names, library, and one-line summaries. Optional `library` filter, `limit` (1–25, default 10).                                                              |
 | `pb_command`     | Full command documentation: syntax, parameters, return value, remarks, example, OS, and related commands. Reference-page titles and aliases return bounded local text with the official source URL. Older indexes retain a URL fallback until rebuilt. |
-| `pb_check`       | Syntax-check a `.pb` file with the **real compiler**  . Reports total processing time, compiler warnings, and structured errors with line numbers, high-confidence hints on common beginner errors, and always-on best-practice notes (missing `EnableExplicit`, `Global` inside procedures, `Goto`/`Gosub`). The file's project tree is staged to a bounded temporary workspace (see [Project staging](#project-staging)); originals are never modified.                                                                                                     |
+| `pb_check`       | Syntax-check a `.pb` file with the **real compiler**. Reports total processing time, compiler warnings, and structured errors with line numbers, high-confidence hints on common beginner errors, and always-on best-practice notes (missing `EnableExplicit`, `Global` inside procedures, `Goto`/`Gosub`). The file's project tree is staged to a bounded temporary workspace (see [Project staging](#project-staging)); originals are never modified.                                                                                                     |
 | `pb_run`         | Compile and run a console program, reporting compiler warnings and capturing stdout. Accepts `args[]` and `timeoutMs` (default 15000, max 60000). Console programs only; the program runs inside the staged copy with the entry file's directory as its working directory, so relative resources and executable-relative DLLs come from the copied project. Generated files are ephemeral and removed with the workspace. |
 | `pb_version`     | Report the server version, MCP protocol version, detected PureBasic compiler version + install path, and the docs-index version + build date + entry counts. Takes no arguments.                                     |
 
@@ -170,9 +170,8 @@ interpretation; the root only selects what gets staged:
   Network receive/send bounds are 10 seconds, not an execution deadline.
 - **Bounded framing** — 16 connections, 16 KiB headers, 1 MiB body,
   keepalive/chunked/HTTP/2 unsupported (rejected without dispatch).
-- **Docs-index preload** — thread-safe builds (`--thread`, Linux) load the
-  docs index in a background thread at startup. The Windows non-thread-safe
-  build has a known preload race; deployment guidance sets `PBMCP_PRELOAD=0`.
+- **Docs-index preload** — `PBMCP_PRELOAD=1` loads the index synchronously
+  at startup; the default loads it on the first documentation call.
 
 ## Local verification
 
@@ -223,8 +222,7 @@ looks up `OpenWindow` with its syntax. Run it independently with
 Failed builds or tests preserve the previous distribution:
 
     dist/pbmcp[.exe]                  native server binary
-    dist/index-*.json                 newest repo-root docs index (working drop-in;
-                                      embedded placeholder covers when absent)
+    dist/index.json                   current docs index (swap for another index-*.json)
     dist/README.md
     dist/INSTALL.md                   quickstart for binary consumers
     dist/LICENSE
@@ -254,7 +252,7 @@ For faster iteration, look up a known command directly with `pb_command`, use
 session. Check each coherent edit batch before delivery. `pb_run` rejects
 arguments containing double quotes, NUL, or newlines. Supported arguments are
 passed as separate program parameters. Its executable and compiler artifacts stay in temporary
-storage, while relative includes and runtime data paths use the original source.
+storage. Relative includes and runtime data paths use the staged project.
 Processes that remain in each run's Windows job or Linux process group are
 terminated after normal exit, timeout, cancellation, or server termination. On
 Linux, a descendant can escape this cleanup by creating a new session or

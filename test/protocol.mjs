@@ -188,8 +188,8 @@ const toolSchemas = session([request(1, 'tools/list')])[0].result.tools;
 const validArgs = {
   pb_docs_search: { query: 'window', library: 'Window', limit: 2 },
   pb_command: { name: 'OpenWindow' },
-  pb_check: { file: join(root, 'test', 'fixtures', 'hello.pb') },
-  pb_run: { file: join(root, 'test', 'fixtures', 'hello.pb'), args: [], timeoutMs: 1000 },
+  pb_check: { file: join(root, 'test', 'fixtures', 'hello.pb'), projectRoot: join(root, 'test', 'fixtures') },
+  pb_run: { file: join(root, 'test', 'fixtures', 'hello.pb'), projectRoot: join(root, 'test', 'fixtures'), args: [], timeoutMs: 1000 },
   pb_version: {},
 };
 for (const tool of toolSchemas) {

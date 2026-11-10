@@ -80,6 +80,9 @@ Procedure FinishResponse(json.i)
   Protected response$ = ComposeJSON(json)
   If gHttpMode
     gHttpCapturedResponse = response$
+  ElseIf gBatchActive
+    If gBatchResponses$ <> "" : gBatchResponses$ + "," : EndIf
+    gBatchResponses$ + response$
   Else
     WriteLine(response$)
   EndIf

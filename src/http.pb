@@ -531,6 +531,7 @@ Procedure HttpProcessBody(Client.i, *body, BodyLength.i, VersionHeader$, Version
   Else
     Protected replyJson.i = ParseJSON(#PB_Any, reply$)
     If replyJson
+      If GetJSONMember(JSONValue(replyJson), "error") : category$ = "tool_error" : EndIf
       ; JSON-RPC error replies (-32601 etc.) carry "error" and no "result";
       ; GetJSONMember requires an object value - asking a 0 member crashes.
       Protected replyResult.i = GetJSONMember(JSONValue(replyJson), "result")

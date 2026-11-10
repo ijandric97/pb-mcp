@@ -148,7 +148,9 @@ Procedure RunConsoleProgram(CompilerExe$, AbsFile$, ProjectRoot$, List ProgArgs$
   EndIf
 
   If *res\stagingError = ""
-    CompilerStepWithRetry(CompilerExe$, #SW_CONSOLE$, copy\file, exe$, @*res\compileRes)
+    CompilerStepWithRetry(CompilerExe$, #SW_CONSOLE$, copy\file, exe$, runCwd$, @*res\compileRes)
+    *res\compileRes\stdout = ReplaceString(*res\compileRes\stdout, copy\root, Left(AbsFile$, Len(copy\sourceRoot)))
+    *res\compileRes\stderr = ReplaceString(*res\compileRes\stderr, copy\root, Left(AbsFile$, Len(copy\sourceRoot)))
   EndIf
   *res\compileDurationMs = *res\compileRes\durationMs
   ParseDiagnostics(*res\compileRes\stdout, *res\compileErrors(), *res\compileWarnings())
@@ -175,7 +177,7 @@ Procedure RunConsoleProgram(CompilerExe$, AbsFile$, ProjectRoot$, List ProgArgs$
     EndIf
   EndIf
 
-  CleanupTempDir(copydir)
+  CleanupTempDir(copy\dir)
 
   *res\durationMs = ElapsedMilliseconds() - t0
   *res\ok = Bool(*res\hasRun And *res\runRes\exitCode = 0 And *res\runRes\timedOut = #False And *res\runRes\cancelled = #False)
